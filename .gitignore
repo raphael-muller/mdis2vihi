@@ -1,0 +1,31 @@
+# Data
+/data/
+
+# Rasters, caches and logs written under runs/
+/runs/**/*.tif
+/runs/**/*.gpkg
+/runs/**/*.png
+/runs/**/*.log
+/runs/**/*.npz
+/runs/final/eval/**/*.parquet
+/runs/lsf_target/
+!/runs/final/correction/residual_basis_rank2.npz
+/runs/**/checkpoints/last.ckpt
+
+# Cluster job logs
+/slurm/logs/*
+!/slurm/logs/.gitkeep
+
+# Python
+/.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.ipynb_checkpoints/
+.pytest_cache/
+
+# Editor and OS
+/.idea/
+/.vscode/
+.DS_Store
+Thumbs.db

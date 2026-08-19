@@ -1,0 +1,37 @@
+{
+  "band_nm": 995.0,
+  "craters": [
+    "Dominici",
+    "Hopper",
+    "Tyagaraja",
+    "Warhol"
+  ],
+  "measured_contrast": {
+    "Dominici": 1.1776709211586662,
+    "Hopper": 1.768114528788562,
+    "Tyagaraja": 1.3789361955769464,
+    "Warhol": 1.3417831995270235
+  },
+  "deliverable_contrast": {
+    "Dominici": 1.0274373257613267,
+    "Hopper": 1.4854632998917392,
+    "Tyagaraja": 1.2581770527479563,
+    "Warhol": 1.1418422258596024
+  },
+  "s_star": {
+    "Dominici": 0.3,
+    "Hopper": 0.74,
+    "Tyagaraja": 0.47000000000000003,
+    "Warhol": 0.375
+  },
+  "loo_error": {
+    "Dominici": 0.07716993260053173,
+    "Hopper": -0.13905680069708204,
+    "Tyagaraja": -0.025217013061359816,
+    "Warhol": 0.04868312560451371
+  },
+  "loo_abs_error_median": 0.06292652910252272,
+  "uncorrected_abs_error_median": 0.17508728453238032,
+  "scale_to_deploy": 0.4225,
+  "residual_ckpt": "runs/final/correction/residual_rank2.ckpt"
+}

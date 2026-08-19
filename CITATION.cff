@@ -1,0 +1,67 @@
+cff-version: 1.2.0
+title: "mdis2vihi: pixel-wise spectral reconstruction of a VIHI-like hyperspectral mosaic of Mercury from MESSENGER/MDIS"
+message: "If you use this software, the trained model or the synthetic mosaic, please cite this work and the underlying datasets (see docs/DATA.md)."
+type: software
+authors:
+  - family-names: Müller
+    given-names: Raphaël
+    affiliation: "LIRA, Laboratoire d'Instrumentation et de Recherche en Astrophysique, Observatoire de Paris, PSL"
+version: "1.0.0"
+date-released: "2026-06-19"
+license: MIT
+repository-code: "https://github.com/raphael-muller/mdis2vihi"
+keywords:
+  - Mercury
+  - hyperspectral
+  - spectral super-resolution
+  - MESSENGER
+  - MDIS
+  - MASCS
+  - VIRS
+  - BepiColombo
+  - SIMBIO-SYS
+  - VIHI
+  - planetary science
+  - machine learning
+abstract: >-
+  A fully-connected neural network maps, at a single pixel, the 8-band MDIS
+  multispectral reflectance of Mercury (plus the observation emission angle) to a
+  231-band VIHI-like spectrum on a common 5 nm grid spanning 300-1450 nm. Trained
+  on 153 214 co-located MDIS/MASCS-VIRS pairs with a group split on observation
+  identifier, it is applied pixel by pixel over the MESSENGER/MDIS global mosaic
+  to produce a synthetic hyperspectral mosaic of the whole planet, intended as an
+  early stand-in for BepiColombo/SIMBIO-SYS VIHI data. A second form of the mosaic
+  adds a detachable rank-2 correction layer that restores the brightness contrast of
+  catalogued hollows, the one surface unit the quality filter excludes from training.
+  The repository contains the full pipeline (colocation, target construction,
+  training, tiled inference, evaluation), the delivered checkpoint, the correction
+  layer and the audit artefacts.
+references:
+  - type: article
+    title: "Multispectral imaging of Mercury: MDIS instrument"
+    authors:
+      - family-names: Hawkins
+        given-names: S. Edward
+    year: 2007
+    notes: "MDIS instrument reference; WAC filter naming."
+  - type: article
+    title: "The MESSENGER Atmospheric and Surface Composition Spectrometer (MASCS)"
+    authors:
+      - family-names: Izenberg
+        given-names: Noam R.
+    year: 2014
+    notes: "MASCS/VIRS reference; photometric normalisation geometry."
+  - type: article
+    title: "Global photometric properties of Mercury from MDIS"
+    authors:
+      - family-names: Denevi
+        given-names: Brett W.
+    year: 2018
+    notes: "MDIS MDR mosaic photometric processing; Kaasalainen-Shkuratov coefficients."
+  - type: article
+    title: "SIMBIO-SYS: the spectrometer and imagers integrated observatory system for BepiColombo"
+    authors:
+      - family-names: Cremonese
+        given-names: Gabriele
+    year: 2020
+    notes: "VIHI channel specifications, the target instrument this work emulates."

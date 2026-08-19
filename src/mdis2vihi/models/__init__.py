@@ -1,0 +1,1 @@
+"""Plain PyTorch modules. Kept Lightning-agnostic on purpose, see mdis2vihi.lit."""

@@ -1,0 +1,35 @@
+{
+  "_comment": "Trained correction network of the hollow correction layer. Kept next to the layer so that scripts/tools/build_hollow_correction.py works from a bare checkout; scripts/08_train_residual.py regenerates it from the input data. Train/validation are separated by footprint, not by row.",
+  "emission_mean": 21.470380783081055,
+  "emission_std": 17.301841735839844,
+  "best_ckpt": "runs/final/correction/residual_rank2.ckpt",
+  "seed": 42,
+  "rank": 2,
+  "coef_hidden": [
+    32
+  ],
+  "res_hidden": [
+    128,
+    128
+  ],
+  "learn_basis": false,
+  "val_fold": "fold0",
+  "syn_frac": 0.3,
+  "syn_val_frac": 0.15,
+  "simpairs": "simpairs_S2.parquet",
+  "base_model_ckpt": "runs/final/lightning_logs/version_0/checkpoints/epoch=93-step=10340.ckpt",
+  "basis_report": {
+    "n_rows_total": 3627,
+    "n_rows_used": 2091,
+    "explained_variance_ratio": [
+      0.9455804706682968,
+      0.021485891219867763,
+      0.007138402672360514,
+      0.0021234157021858616,
+      0.0013893579052213195
+    ],
+    "cumulative_at_rank": 0.9670663618881645,
+    "median_residual_norm": 0.10126425690039167
+  },
+  "arch": "low-rank residual, spatial catalogue selection at inference"
+}

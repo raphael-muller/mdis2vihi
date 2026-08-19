@@ -1,0 +1,15 @@
+{
+  "emission_mean": 21.470380783081055,
+  "emission_std": 17.301841735839844,
+  "in_features": 9,
+  "hidden": [
+    128,
+    256,
+    256
+  ],
+  "activation": "gelu",
+  "target_col": "lsf_5p0",
+  "seed": 42,
+  "best_ckpt": "runs/final/lightning_logs/version_0/checkpoints/epoch=93-step=10340.ckpt",
+  "note": "input = 8 raw MDIS I/F + (emission - emission_mean)/emission_std; inference: scripts/04_predict_mosaic.py --emission-band 9 --emission-stats this.json"
+}

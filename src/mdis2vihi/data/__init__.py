@@ -1,0 +1,1 @@
+"""Data layer: readers for the MDIS mosaic and the MASCS/VIRS sidecar files."""

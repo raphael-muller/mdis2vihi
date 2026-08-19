@@ -1,0 +1,149 @@
+{
+  "description": "Hollow-contrast correction layer, unionbb0.8 configuration. Built and applied as described in docs/REPRODUCTION.md, steps 6-10.",
+  "formula": "output = deliverable + g(lon,lat,reflectance)*[c(x) @ B.T] ; g = scale*[(Thomas union HORNET 0.8) inter bright+blue(global Mercury ref.)]",
+  "base_mosaic": "runs/final/mdis2vihi_global_final_deflate.tif",
+  "base_model_ckpt": "runs/final/lightning_logs/version_0/checkpoints/epoch=93-step=10340.ckpt",
+  "residual": {
+    "ckpt": "runs/final/correction/residual_rank2.ckpt",
+    "rank": 2,
+    "coef_hidden": [
+      32
+    ],
+    "base_md5": "595997584ace",
+    "n_params_coef": 386
+  },
+  "selection": {
+    "source": "unionbb0.8",
+    "scale": 0.5,
+    "z_thresh": 0.5,
+    "buffer_km": 1.0,
+    "margin": 1.5,
+    "floor_km": 3.0,
+    "n_thomas": 608,
+    "thomas_R_km": [
+      3.0,
+      3.0,
+      70.51477359216497
+    ],
+    "hornet_variant": "0.8",
+    "hornet": {
+      "n_raw": 3268,
+      "n_seam": 0,
+      "n_degenerate": 5,
+      "n_oversized": 58,
+      "n_kept": 3205
+    },
+    "n_disk_vertices": 128,
+    "thomas_md5": "e1587b7bb901",
+    "hornet_md5": "533eefeca155",
+    "bright_blue_ref": {
+      "mu_r749": 0.07082953492951827,
+      "sd_r749": 0.010454993976778494,
+      "mu_ratio": 0.5973916601494608,
+      "sd_ratio": 0.023825294193012523,
+      "calibration": "footprints",
+      "source": "data/processed/pairs.parquet"
+    }
+  },
+  "emission": {
+    "mean": 21.470380783081055,
+    "std": 17.301841735839844,
+    "source": "runs/final/emission_stats.json"
+  },
+  "grid": {
+    "width": 23040,
+    "height": 11521,
+    "n_bands": 231,
+    "res_m": 665.24315270546,
+    "crs": "PROJCS[\"Equirectangular Mercury\",GEOGCS[\"GCS_Mercury\",DATUM[\"D_Mercury\",SPHEROID[\"Mercury_localRadius\",2439400,0]],PRIMEM[\"Reference_Meridian\",0],UNIT[\"degree\",0.0174532925199433,AUTHORITY[\"EPSG\",\"9122\"]]],PROJECTION[\"Equirectangular\"],PARAMETER[\"standard_parallel_1\",0],PARAMETER[\"central_meridian\",0],PARAMETER[\"false_easting\",0],PARAMETER[\"false_northing\",0],UNIT[\"metre\",1,AUTHORITY[\"EPSG\",\"9001\"]],AXIS[\"Easting\",EAST],AXIS[\"Northing\",NORTH]]"
+  },
+  "layer": {
+    "n_pixels_spatial": 432295,
+    "n_pixels_invalid_mdis": 48,
+    "n_pixels_rejected_bright_blue": 317135,
+    "n_pixels_corrected": 115112,
+    "fraction_mosaic_pct": 0.04337,
+    "bright_blue_rate_in_spatial_selection": 0.2663
+  },
+  "bright_blue_ref_audit": {
+    "n_background_pixels": 541453,
+    "ref_footprints": {
+      "mu_r749": 0.07082953492951827,
+      "sd_r749": 0.010454993976778494,
+      "mu_ratio": 0.5973916601494608,
+      "sd_ratio": 0.023825294193012523
+    },
+    "pixels_665m": {
+      "mu_r749": 0.07187679782916656,
+      "sd_r749": 0.016962559722509134,
+      "mu_ratio": 0.5943871685656129,
+      "sd_ratio": 0.10242616503601906
+    },
+    "sigma_pixel_over_footprint_r749": 1.622,
+    "sigma_pixel_over_footprint_ratio": 4.299,
+    "background_passing_bright_blue_pct": 12.005
+  },
+  "files": {
+    "layer": "hollow_layer_unionbb0.8.parquet",
+    "selection": "hollow_selection_unionbb0.8.tif",
+    "spatial_selection": "hollow_selection_spatial.tif",
+    "basis": "residual_basis_rank2.npz"
+  },
+  "build_duration_s": 27.9,
+  "application": {
+    "mode": "rewrite",
+    "output": "runs/final/mdis2vihi_global_final_postcorr_unionbb0.8_deflate.tif",
+    "source": "runs/final/mdis2vihi_global_final_deflate.tif",
+    "size_bytes": 158375949727,
+    "source_size_bytes": 158371636788,
+    "audit": {
+      "n_pixels_written": 115112,
+      "n_pixels_nodata_skipped": 0,
+      "delta_max_abs": 0.12505994737148285,
+      "n_negative_after": 0,
+      "delta_med_996": 0.0056298114359378815,
+      "n_windows": 414,
+      "duration_s": 2769.8
+    },
+    "verification": {
+      "corrected_tiles": [
+        {
+          "tile": [
+            21,
+            4
+          ],
+          "n_selected_pixels": 1810,
+          "max_diff_outside_selection": 0.0,
+          "max_diff_inside_selection": 0.009581200778484344
+        },
+        {
+          "tile": [
+            7,
+            15
+          ],
+          "n_selected_pixels": 182,
+          "max_diff_outside_selection": 0.0,
+          "max_diff_inside_selection": 0.02548941969871521
+        },
+        {
+          "tile": [
+            24,
+            10
+          ],
+          "n_selected_pixels": 52,
+          "max_diff_outside_selection": 0.0,
+          "max_diff_inside_selection": 0.0033167898654937744
+        }
+      ],
+      "untouched_tile": {
+        "tile": [
+          38,
+          3
+        ],
+        "max_diff": 0.0
+      },
+      "exact_reversibility": true
+    },
+    "total_duration_min": 46.3
+  }
+}

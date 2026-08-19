@@ -1,0 +1,28 @@
+# Normalise line endings so a Windows checkout still produces files that run
+# on the Linux cluster. Without `eol=lf`, git's autocrlf turns the sbatch
+# scripts into CRLF and SLURM fails with "bad interpreter: /bin/bash^M".
+*.sbatch  text eol=lf
+*.sh      text eol=lf
+
+# Plain text, normalised in the repository, native on checkout.
+*.py      text
+*.md      text
+*.yaml    text
+*.yml     text
+*.cff     text
+*.txt     text
+*.bib     text
+
+# Notebooks are JSON: keep them text but never merge them automatically:
+# a conflicted .ipynb is unopenable.
+*.ipynb   text merge=binary
+
+# Binary, never touch.
+*.ckpt    binary
+*.parquet binary
+*.npz     binary
+*.png     binary
+*.jpg     binary
+*.pdf     binary
+*.tif     binary
+*.qgz     binary

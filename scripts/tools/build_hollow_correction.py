@@ -158,8 +158,8 @@ def main():
           f"parameters, fixed basis (231, {residual.rank})", flush=True)
 
     layer, lstats = build_layer(mask, MDIS, residual, bb_ref,
-                                emission_mean=stats["emission_mean"],
-                                emission_std=stats["emission_std"],
+                                image_count_mean=stats["image_count_mean"],
+                                image_count_std=stats["image_count_std"],
                                 scale=args.scale, z_thresh=args.z_thresh)
     print(f"layer: {lstats['n_pixels_corrected']} pixels corrected "
           f"({lstats['fraction_mosaic_pct']} % of the mosaic); "
@@ -207,8 +207,9 @@ def main():
                                      "source": (str(PAIRS.relative_to(REPO))
                                                 if args.bb_ref == "footprints"
                                                 else "MDIS 665 m pixels (48 rows)")}},
-        "emission": {"mean": stats["emission_mean"], "std": stats["emission_std"],
-                     "source": "runs/final/emission_stats.json"},
+        "image_count": {"mean": stats["image_count_mean"],
+                        "std": stats["image_count_std"],
+                        "source": "runs/final/image_count_stats.json"},
         "grid": {"width": W, "height": H, "n_bands": 231,
                  "res_m": abs(transform.a), "crs": crs.to_string()},
         "layer": lstats, "bright_blue_ref_audit": bb_audit,

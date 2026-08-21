@@ -30,7 +30,7 @@ from rasterio.windows import Window
 N_BANDS = 231
 GRID_NM = np.arange(300.0, 1450.0 + 5.0, 5.0)
 NODATA_THRESHOLD = -1e30
-MDIS_INPUT_BANDS = (1, 2, 3, 4, 5, 6, 7, 8, 9)      # 8 I/F + emission angle
+MDIS_INPUT_BANDS = (1, 2, 3, 4, 5, 6, 7, 8, 9)      # 8 I/F + the band-9 image count
 
 
 def coef_columns(df):
@@ -76,7 +76,8 @@ class CorrectionNetwork:
                                        "n_params": sum(p.numel() for p in coef.parameters())})
 
     def coefficients(self, x9: np.ndarray) -> np.ndarray:
-        """(N, 9) -> (N, rank). `x9` = 8 raw I/F bands + z-standardised emission."""
+        """(N, 9) -> (N, rank). `x9` = 8 raw I/F bands + the z-standardised band-9
+        count, exactly as the base model is fed."""
         with torch.no_grad():
             return self.coef(torch.from_numpy(np.ascontiguousarray(x9, dtype=np.float32))).numpy()
 
@@ -90,7 +91,7 @@ class CorrectionNetwork:
 # Building the layer
 # ---------------------------------------------------------------------------
 def build_layer(spatial_mask, mdis_path, residual: CorrectionNetwork, bb_ref,
-                emission_mean, emission_std, scale=0.50, z_thresh=0.5,
+                image_count_mean, image_count_std, scale=0.50, z_thresh=0.5,
                 row_block=256, progress=True):
     """Final selection + coefficients, on the pixels of the spatial stage only.
 
@@ -130,7 +131,7 @@ def build_layer(spatial_mask, mdis_path, residual: CorrectionNetwork, bb_ref,
                 continue
 
             x9 = v[:, bb].T.copy()
-            x9[:, 8] = (x9[:, 8] - emission_mean) / emission_std
+            x9[:, 8] = (x9[:, 8] - image_count_mean) / image_count_std
             coef = residual.coefficients(x9)
             df = pd.DataFrame({"row": (r0 + rr[bb]).astype(np.int32),
                                "col": cc[bb].astype(np.int32),

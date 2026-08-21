@@ -214,9 +214,9 @@ def colocate(pool, mosaic_path, vis_floor):
                 continue
             iof.append(vals[0:8]); emis.append(vals[8]); sigma.append(vals[9:17])
             vis.append(float(np.nanmedian(vals[VIS_BANDS])))
-    pool = pool.assign(mdis_iof=iof, mdis_emission=emis, mdis_sigma=sigma,
+    pool = pool.assign(mdis_iof=iof, mdis_image_count=emis, mdis_sigma=sigma,
                        vis_median_iof=vis)
-    ok = pool.mdis_iof.notna() & np.isfinite(pool.mdis_emission)
+    ok = pool.mdis_iof.notna() & np.isfinite(pool.mdis_image_count)
     n_bad = int((~ok).sum())
     pool = pool[ok]
     under = pool.vis_median_iof <= vis_floor
@@ -315,7 +315,7 @@ def main():
           f"{n_floor} under the visible floor {args.vis_floor}", flush=True)
 
     cols = ["group_id", "ref_id", "obs_id", "lat_center", "lon_center", "d_group_km",
-            "q1", "q2", "q3", "q4", "mdis_iof", "mdis_emission", "mdis_sigma",
+            "q1", "q2", "q3", "q4", "mdis_iof", "mdis_image_count", "mdis_sigma",
             "vis_median_iof", "foot_geom"]
     if not args.no_target:
         print(f"reading the native spectra of {len(pool)} footprints "

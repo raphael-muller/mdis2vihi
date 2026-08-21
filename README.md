@@ -44,7 +44,8 @@ It does **not** contain the input data (third-party, ~52 GB) nor either mosaic
 ## The model
 
 A fully-connected MLP, `[9 → 128 → 256 → 256 → 231]`, GELU. Input: the 8 MDIS I/F
-bands plus the observation **emission angle**, z-standardised. Target: the
+bands plus band 9, the **count of 8-colour image sets** stacked at that pixel,
+transformed and z-standardised. Target: the
 co-located MASCS/VIRS spectrum resampled with the instrument's line-spread
 function. Loss: NaN-tolerant MSE.
 
@@ -83,7 +84,7 @@ No install step for the package: the scripts put `src/` on `sys.path` themselves
 # regenerate the mosaic from the committed checkpoint, quick test first
 python scripts/04_predict_mosaic.py \
     --ckpt runs/final/lightning_logs/version_0/checkpoints/epoch=93-step=10340.ckpt \
-    --emission-band 9 --emission-stats runs/final/emission_stats.json \
+    --count-band 9 --count-stats runs/final/image_count_stats.json \
     --output runs/final/predict_roi.tif --roi 11000 5500 1024 1024
 ```
 
@@ -93,7 +94,7 @@ The full chain (needing the input data) is five numbered scripts:
 |---|---|---|
 | 1 | `01_build_pairs.py` | `data/processed/{pairs,splits}.parquet` |
 | 2 | `02_build_lsf_target.py --build` | `data/processed/virs_lsf_target.parquet` |
-| 3 | `03_train_final.py` | `runs/final/` checkpoint + `emission_stats.json` |
+| 3 | `03_train_final.py` | `runs/final/` checkpoint + `image_count_stats.json` |
 | 4 | `04_predict_mosaic.py` | the mosaic (~245 GB, compressed to ~158 GB) |
 | 5 | `05_eval_final.py` | `runs/final/eval/final_*` |
 
@@ -112,7 +113,7 @@ scripts/            production chain 01-05, correction layer 06-08; tools in too
 slurm/              the two cluster jobs, as submitted on MesoPSL
 notebooks/          01 check the input data, 02 check the mosaic
 docs/               reproduction, deliverable, data, cluster
-runs/final/         delivered checkpoint, emission stats, evaluation, correction layer
+runs/final/         delivered checkpoint, band-9 stats, evaluation, correction layer
 ```
 
 `scripts/tools/` holds the five extra tools that live outside the chain:

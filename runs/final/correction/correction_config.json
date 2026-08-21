@@ -45,10 +45,10 @@
       "source": "data/processed/pairs.parquet"
     }
   },
-  "emission": {
+  "image_count": {
     "mean": 21.470380783081055,
     "std": 17.301841735839844,
-    "source": "runs/final/emission_stats.json"
+    "source": "runs/final/image_count_stats.json"
   },
   "grid": {
     "width": 23040,

@@ -3,11 +3,13 @@
 No arguments: everything is fixed here, because this script produces the checkpoint the
 mosaic is generated from.
 
-  INPUT   the 8 MDIS I/F bands plus the emission angle (band 9), standardised on the
-          training split only. Band 9 is the observing geometry of the mosaic pixel: it
-          is a smooth function of latitude (r = -0.49) and nearly independent of the
-          geometry of the MASCS spectrum it is paired with (r = 0.17), so what it supplies
-          is a regional covariate. The gain it brings is empirical.
+  INPUT   the 8 MDIS I/F bands plus band 9, standardised on the training split only.
+          Band 9 is the count of 8-colour image sets averaged into the mosaic pixel
+          (docs/DATA.md), so it is an instrumental covariate rather than a surface
+          quantity: it proxies the pixel's signal-to-noise, since the mosaic's sigma
+          planes follow 1 / sqrt(count), and it marks the acquisition regime, being a
+          smooth function of latitude (r = -0.49) and nearly independent of the geometry
+          of the MASCS spectrum it is paired with (r = 0.17).
   TARGET  `lsf_5p0` from `data/processed/virs_lsf_target.parquet`.
 
 SpectralMLP (128, 256, 256) with GELU, NaN-tolerant MSE, Adam 1e-3,
@@ -15,13 +17,13 @@ ReduceLROnPlateau(patience 5, factor 0.5), EarlyStopping(patience 15), batch 102
 validation on fold 0, test split kept aside, deterministic kernels and a fixed seed. These
 values come from a hyperparameter search whose record is not part of this repository.
 
-`runs/final/emission_stats.json` carries the emission mean and standard deviation and is
+`runs/final/image_count_stats.json` carries the band-9 mean and standard deviation and is
 **required** at inference.
 
 Run:    python scripts/03_train_final.py    (111 907 training pairs; the delivered run
         stopped at epoch 93 of at most 100, GPU or CPU)
 Writes: runs/final/lightning_logs/.../checkpoints/*.ckpt,
-        runs/final/emission_stats.json, runs/final/eval/final_test_metrics.json
+        runs/final/image_count_stats.json, runs/final/eval/final_test_metrics.json
 """
 
 from __future__ import annotations
@@ -58,7 +60,7 @@ SPLITS = REPO_ROOT / "data/processed/splits.parquet"
 LSF = REPO_ROOT / "data/processed/virs_lsf_target.parquet"
 RUN_DIR = REPO_ROOT / "runs/final"
 EVAL_DIR = RUN_DIR / "eval"
-STATS_JSON = RUN_DIR / "emission_stats.json"
+STATS_JSON = RUN_DIR / "image_count_stats.json"
 
 SEED = 42
 HIDDEN = (128, 256, 256)
@@ -68,7 +70,7 @@ MAX_EPOCHS = 100
 
 
 def load_splits():
-    pairs = pd.read_parquet(PAIRS, columns=["ref_id", "mdis_iof", "mdis_emission"])
+    pairs = pd.read_parquet(PAIRS, columns=["ref_id", "mdis_iof", "mdis_image_count"])
     lsf = pd.read_parquet(LSF, columns=["ref_id", TARGET_COL])
     splits = pd.read_parquet(SPLITS)
     df = pairs.merge(lsf, on="ref_id").merge(splits, on="ref_id", how="inner")
@@ -82,14 +84,14 @@ def load_splits():
         d = df[m]
         out[name] = dict(
             X=np.stack(d.mdis_iof.to_list()).astype(np.float32),
-            E=d.mdis_emission.to_numpy(np.float32)[:, None],
+            E=d.mdis_image_count.to_numpy(np.float32)[:, None],
             Y=np.stack(d[TARGET_COL].to_list()).astype(np.float32),
         )
     return out
 
 
 def build9(data, emean, estd):
-    """8 raw I/F + z-standardized emission -> (N, 9)."""
+    """8 raw I/F + the z-standardized band-9 image count -> (N, 9)."""
     return {
         s: np.concatenate([data[s]["X"], (data[s]["E"] - emean) / estd], axis=1).astype(np.float32)
         for s in data
@@ -125,7 +127,7 @@ def main():
     estd = float(data["train"]["E"].std() + 1e-8)
     X9 = build9(data, emean, estd)
     print(f"train {len(X9['train'])}  val {len(X9['val'])}  test {len(X9['test'])}  "
-          f"| emission z-stats: mean={emean:.4f} std={estd:.4f}", flush=True)
+          f"| image-count z-stats: mean={emean:.4f} std={estd:.4f}", flush=True)
 
     train_ds = TensorDataset(torch.from_numpy(X9["train"]), torch.from_numpy(data["train"]["Y"]))
     val_ds = TensorDataset(torch.from_numpy(X9["val"]), torch.from_numpy(data["val"]["Y"]))
@@ -148,11 +150,13 @@ def main():
     print(f"best checkpoint: {best}", flush=True)
 
     STATS_JSON.write_text(json.dumps({
-        "emission_mean": emean, "emission_std": estd,
+        "image_count_mean": emean, "image_count_std": estd,
         "in_features": 9, "hidden": list(HIDDEN), "activation": "gelu",
         "target_col": TARGET_COL, "seed": SEED, "best_ckpt": best,
-        "note": "input = 8 raw MDIS I/F + (emission - emission_mean)/emission_std; "
-                "inference: scripts/04_predict_mosaic.py --emission-band 9 --emission-stats this.json",
+        "band9_meaning": "count of 8-colour image sets at the pixel "
+                         "(PDS MDR v3+ backplane a), see docs/DATA.md",
+        "note": "input = 8 raw MDIS I/F + (band 9 - image_count_mean)/image_count_std; "
+                "inference: scripts/04_predict_mosaic.py --count-band 9 --count-stats this.json",
     }, indent=2), encoding="utf-8")
     print(f"wrote {STATS_JSON}", flush=True)
 
@@ -172,8 +176,8 @@ def main():
     pan["mse"] = float(np.nanmean((Yp - Yt) ** 2))
     pan["mlp_over_floor"] = pan["mse"] / floor
     pan["n_test"] = int(len(Yt))
-    pan["emission_mean"] = emean
-    pan["emission_std"] = estd
+    pan["image_count_mean"] = emean
+    pan["image_count_std"] = estd
     (EVAL_DIR / "final_test_metrics.json").write_text(json.dumps(pan, indent=2), encoding="utf-8")
     per_band(Yp, Yt).to_csv(EVAL_DIR / "final_per_band.csv", index=False)
     param_fidelity(Yp, Yt).to_csv(EVAL_DIR / "final_param_fidelity.csv", index=False)

@@ -55,7 +55,7 @@ MDISDATA = REPO_ROOT / "data/raw/mascs/Spectra_0_360_-90_90_MDISdata.dat"
 QUALITY = REPO_ROOT / "data/raw/mascs/Spectra_0_360_-90_90_quality.dat"
 RUN_DIR = REPO_ROOT / "runs/final"
 EVAL_DIR = RUN_DIR / "eval"
-STATS = json.loads((RUN_DIR / "emission_stats.json").read_text(encoding="utf-8"))
+STATS = json.loads((RUN_DIR / "image_count_stats.json").read_text(encoding="utf-8"))
 
 TARGET_COL = "lsf_5p0"
 HIDDEN = tuple(STATS["hidden"])
@@ -73,7 +73,7 @@ def scm_deg(Yp, Yt):
 def load():
     pairs = pd.read_parquet(
         PAIRS, columns=["ref_id", "obs_id", "lat_center", "lon_center",
-                        "ang_in", "ang_em", "ang_ph", "mdis_iof", "mdis_emission"])
+                        "ang_in", "ang_em", "ang_ph", "mdis_iof", "mdis_image_count"])
     lsf = pd.read_parquet(LSF, columns=["ref_id", TARGET_COL])
     splits = pd.read_parquet(SPLITS)
     df = pairs.merge(lsf, on="ref_id").merge(splits, on="ref_id", how="inner")
@@ -82,7 +82,7 @@ def load():
 
 def to_arrays(d, emean, estd):
     X8 = np.stack(d.mdis_iof.to_list()).astype(np.float32)
-    E = d.mdis_emission.to_numpy(np.float32)[:, None]
+    E = d.mdis_image_count.to_numpy(np.float32)[:, None]
     X9 = np.concatenate([X8, (E - emean) / estd], axis=1).astype(np.float32)
     Y = np.stack(d[TARGET_COL].to_list()).astype(np.float32)
     return X8, X9, Y
@@ -136,7 +136,7 @@ def main():
     require_inputs()
     EVAL_DIR.mkdir(parents=True, exist_ok=True)
     df = load()
-    emean, estd = STATS["emission_mean"], STATS["emission_std"]
+    emean, estd = STATS["image_count_mean"], STATS["image_count_std"]
 
     sub = {
         "train": df[~df.split.isin(["fold0", "test"])],
@@ -257,7 +257,7 @@ def main():
     # ---- per-band + per-parameter fidelity (r, OLS slope, Lin's CCC, bias) ----
     # Owned by the audit script rather than by 03_train_final.py, so the panel can be
     # refreshed without retraining. `final_test_metrics.json` is MERGED, not rewritten:
-    # the keys 03 alone produces (knn_floor_k5, emission_*) are preserved, while the
+    # the keys 03 alone produces (knn_floor_k5, image_count_*) are preserved, while the
     # metric-panel keys are recomputed on this same test split.
     per_band(Ypt, Ytt).to_csv(EVAL_DIR / "final_per_band.csv", index=False)
     pf = param_fidelity(Ypt, Ytt)

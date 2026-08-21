@@ -100,7 +100,7 @@ def main():
     layer = pd.read_parquet(LD / cfg["files"]["layer"])
     residual = CorrectionNetwork.from_checkpoint(REPO / cfg["residual"]["ckpt"])
     base = load_base_model(REPO / cfg["base_model_ckpt"])
-    emean, estd = cfg["emission"]["mean"], cfg["emission"]["std"]
+    emean, estd = cfg["image_count"]["mean"], cfg["image_count"]["std"]
     with rasterio.open(DELIVERABLE) as ds:
         transform, W, H = ds.transform, ds.width, ds.height
 

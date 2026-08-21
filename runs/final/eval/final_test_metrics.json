@@ -11,8 +11,8 @@
   "mse": 4.6502793683033856e-05,
   "mlp_over_floor": 1.5567914418821969,
   "n_test": 15047,
-  "emission_mean": 21.470380783081055,
-  "emission_std": 17.301841735839844,
+  "image_count_mean": 21.470380783081055,
+  "image_count_std": 17.301841735839844,
   "ccc_key_balanced": 0.5686312782931702,
   "slope_key_balanced": 0.42541745833432526
 }

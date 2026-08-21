@@ -39,8 +39,8 @@ Read back from the delivered file, not copied from a design document.
 | Overviews | none |
 
 A pixel is nodata on *all* 231 bands as soon as any of the 9 input bands is
-non-finite in the MDIS mosaic: the mask includes the emission band, not only the
-eight reflectances.
+non-finite in the MDIS mosaic: the mask includes band 9, the image-set count, not
+only the eight reflectances.
 
 ---
 
@@ -158,7 +158,8 @@ bias stays under 2.2e-4 throughout, so the tail loses fidelity without drifting.
 
 **Accuracy is not uniform.** Median spectral angle runs from 2.99 deg on smooth plains to
 **3.45 deg on low-reflectance material** (`final_per_terrain.csv`), and depends mildly on
-observing geometry (incidence +0.37, emission -0.33 in correlation), which reads as
+observing geometry of the MASCS spectrum (incidence +0.37, emission -0.33 in
+correlation), which reads as
 grazing-geometry signal-to-noise rather than an artefact.
 
 **Coverage follows MASCS, not a grid.** The 153 214 pairs sit where VIRS happened to

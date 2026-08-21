@@ -2,10 +2,10 @@
 
 Usage
 -----
-Quick test on a small ROI first (final 9-input model -- emission flags required):
+Quick test on a small ROI first (the 9-input model needs both band-9 flags):
     python scripts/04_predict_mosaic.py \\
         --ckpt runs/final/lightning_logs/version_0/checkpoints/epoch=93-step=10340.ckpt \\
-        --emission-band 9 --emission-stats runs/final/emission_stats.json \\
+        --count-band 9 --count-stats runs/final/image_count_stats.json \\
         --output runs/final/predict_roi.tif \\
         --roi 11000 5500 1024 1024
 
@@ -13,7 +13,7 @@ Full mosaic (~245 GB uncompressed -- write with --compress none, compress separa
 on the cluster use slurm/predict_final.sbatch then slurm/compress_final.sbatch):
     python scripts/04_predict_mosaic.py \\
         --ckpt runs/final/lightning_logs/version_0/checkpoints/epoch=93-step=10340.ckpt \\
-        --emission-band 9 --emission-stats runs/final/emission_stats.json \\
+        --count-band 9 --count-stats runs/final/image_count_stats.json \\
         --output runs/final/mdis2vihi_global_final.tif
 
 The output GeoTIFF is the project deliverable: Float32, 231 bands on
@@ -61,23 +61,24 @@ def main():
     ap.add_argument("--forward-batch", type=int, default=200_000, help="Max pixels per model.forward")
     ap.add_argument("--roi", nargs=4, type=int, metavar=("COL", "ROW", "W", "H"),
                     default=None, help="Optional sub-window to process")
-    ap.add_argument("--emission-band", type=int, default=None,
-                    help="1-indexed mosaic band of the emission angle (9 for the MDIS "
-                         "mosaic) to feed as a 9th input. Requires --emission-stats. "
-                         "Omit for a model without the emission input.")
-    ap.add_argument("--emission-stats", type=Path, default=None,
-                    help="emission_stats.json (from scripts/03_train_final.py) holding "
-                         "emission_mean / emission_std used to z-standardize band 9.")
+    ap.add_argument("--count-band", type=int, default=None,
+                    help="1-indexed mosaic band of the image-set count (9 for the MDIS "
+                         "mosaic) to feed as a 9th input. Requires --count-stats. "
+                         "Omit for a model trained on the 8 I/F bands alone.")
+    ap.add_argument("--count-stats", type=Path, default=None,
+                    help="image_count_stats.json (from scripts/03_train_final.py) holding "
+                         "the mean / std used to z-standardize band 9. The file keeps "
+                         "its historical name, from when band 9 was read as an angle.")
     args = ap.parse_args()
 
-    emission_stats = None
-    if args.emission_band is not None:
-        if args.emission_stats is None:
-            ap.error("--emission-band requires --emission-stats")
-        s = json.loads(Path(args.emission_stats).read_text(encoding="utf-8"))
-        emission_stats = (s["emission_mean"], s["emission_std"])
-        print(f"9-input model: emission band {args.emission_band}, "
-              f"z-stats mean={emission_stats[0]:.4f} std={emission_stats[1]:.4f}")
+    count_stats = None
+    if args.count_band is not None:
+        if args.count_stats is None:
+            ap.error("--count-band requires --count-stats")
+        s = json.loads(Path(args.count_stats).read_text(encoding="utf-8"))
+        count_stats = (s["image_count_mean"], s["image_count_std"])
+        print(f"9-input model: image-count band {args.count_band}, "
+              f"z-stats mean={count_stats[0]:.4f} std={count_stats[1]:.4f}")
 
     compress = None if args.compress == "none" else args.compress
     out = predict_mosaic(
@@ -92,8 +93,8 @@ def main():
         predictor=args.predictor,
         forward_batch=args.forward_batch,
         roi=tuple(args.roi) if args.roi else None,
-        emission_band=args.emission_band,
-        emission_stats=emission_stats,
+        count_band=args.count_band,
+        count_stats=count_stats,
     )
     print(f"wrote {out}")
 

@@ -40,7 +40,7 @@ cluster, read [CLUSTER.md](CLUSTER.md) before launching it. Step 10 is local and
 
 **Shortcut.** The checkpoint is committed
 (`runs/final/lightning_logs/version_0/checkpoints/epoch=93-step=10340.ckpt`, 1.9 MB)
-together with `runs/final/emission_stats.json`. If you only want to regenerate the
+together with `runs/final/image_count_stats.json`. If you only want to regenerate the
 mosaic, you can skip steps 1–3 entirely and go straight to step 4. You still need
 the MDIS mosaic, but not the MASCS spectra.
 
@@ -171,9 +171,9 @@ python scripts/03_train_final.py
 No arguments: everything is fixed in the script, because this produces the
 delivered checkpoint.
 
-**Outputs**: the best `epoch=*.ckpt`, `runs/final/emission_stats.json`
-(**required at inference**: it carries the emission mean/std and the architecture)
-and `runs/final/eval/final_test_metrics.json`.
+**Outputs**: the best `epoch=*.ckpt`, `runs/final/image_count_stats.json`
+(**required at inference**: it carries the band-9 mean and standard deviation and the
+architecture) and `runs/final/eval/final_test_metrics.json`.
 
 **Check before continuing.** The criterion is not MSE ≈ 0 but MSE against the k-NN
 lower bound **on the same split**:
@@ -196,16 +196,17 @@ The full mosaic:
 ```bash
 python scripts/04_predict_mosaic.py \
     --ckpt runs/final/lightning_logs/version_0/checkpoints/epoch=93-step=10340.ckpt \
-    --emission-band 9 --emission-stats runs/final/emission_stats.json \
+    --count-band 9 --count-stats runs/final/image_count_stats.json \
     --output runs/final/mdis2vihi_global_final.tif \
     --device cuda --tile-rows 256 --forward-batch 5000000 --compress none
 ```
 On the cluster: `sbatch -A <account> slurm/predict_final.sbatch`.
 
-**The two emission flags are not optional.** The model has nine inputs:
-`--emission-band 9` reads band 9 of the MDIS mosaic (emission angle) and
-`--emission-stats` supplies the training standardisation. Without them the
-checkpoint will not load, or will load and produce nonsense.
+**The two band-9 flags are not optional.** The model has nine inputs:
+`--count-band 9` reads band 9 of the MDIS mosaic, the count of 8-colour image sets
+stacked at that pixel (see [DATA.md](DATA.md)), and `--count-stats` supplies the
+training standardisation. Without them the checkpoint will not load, or will load and
+produce nonsense.
 
 **Do not enable compression here.** `--compress deflate --predictor 3` corrupts the
 heap inside libgdal in this chunked-writer path. Compression is a separate step.
@@ -228,7 +229,7 @@ On the cluster: `sbatch -A <account> slurm/compress_final.sbatch`. Lossless,
 [`notebooks/02_check_mosaic.ipynb`](../notebooks/02_check_mosaic.ipynb) verifies the
 file against the specification, re-predicts a window from the checkpoint and compares it
 with the mosaic pixel by pixel, and compares the band statistics with the reference run.
-It catches a mosaic written without the emission input, or from the wrong checkpoint.
+It catches a mosaic written without the band-9 input, or from the wrong checkpoint.
 
 ---
 

@@ -1,8 +1,9 @@
 #!/bin/bash
 #
 # Regenerate the deliverable mosaic from the FINAL 9-input model.
-# Pixel-by-pixel inference over the full MDIS mosaic, feeding band 9 (emission)
-# as the 9th input z-standardized with the train stats in emission_stats.json.
+# Pixel-by-pixel inference over the full MDIS mosaic, feeding band 9 (the count of
+# 8-colour image sets) as the 9th input, z-standardized with the train stats in
+# image_count_stats.json.
 # Writes uncompressed BIGTIFF (compress none: the chunked rasterio writer
 # heap-corrupts on deflate+predictor; compress separate with compress_final.sbatch).
 #
@@ -10,7 +11,7 @@
 #     sbatch -A <slurm_account> slurm/predict_final.sbatch
 # Output: runs/final/mdis2vihi_global_final.tif  (~245 GB uncompressed)
 #
-# Prereqs: runs/final/ present (checkpoint + emission_stats.json),
+# Prereqs: runs/final/ present (checkpoint + image_count_stats.json),
 #          data/raw/mdis_mosaic/ present.
 #
 # THIS IS THE JOB AS SUBMITTED ON MesoPSL, kept verbatim as the record of what
@@ -48,7 +49,7 @@ mkdir -p slurm/logs
 # best checkpoint (save_top_k=1 -> the single epoch=*.ckpt that is not last.ckpt);
 # tail -1 picks the latest training version if several exist.
 CKPT=$(ls "$REPO"/runs/final/lightning_logs/version_*/checkpoints/epoch=*.ckpt | tail -1)
-STATS="$REPO/runs/final/emission_stats.json"
+STATS="$REPO/runs/final/image_count_stats.json"
 OUTPUT="$REPO/runs/final/mdis2vihi_global_final.tif"
 
 echo "[$(date -Iseconds)] node=$(hostname) gpu=$(nvidia-smi -L | head -1)"
@@ -67,8 +68,8 @@ python scripts/04_predict_mosaic.py \
     --tile-rows 256 \
     --forward-batch 5000000 \
     --compress none \
-    --emission-band 9 \
-    --emission-stats "$STATS"
+    --count-band 9 \
+    --count-stats "$STATS"
 
 echo "[$(date -Iseconds)] done"
 ls -lh "$OUTPUT"

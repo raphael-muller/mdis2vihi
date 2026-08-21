@@ -1,7 +1,7 @@
 {
   "_comment": "Trained correction network of the hollow correction layer. Kept next to the layer so that scripts/tools/build_hollow_correction.py works from a bare checkout; scripts/08_train_residual.py regenerates it from the input data. Train/validation are separated by footprint, not by row.",
-  "emission_mean": 21.470380783081055,
-  "emission_std": 17.301841735839844,
+  "image_count_mean": 21.470380783081055,
+  "image_count_std": 17.301841735839844,
   "best_ckpt": "runs/final/correction/residual_rank2.ckpt",
   "seed": 42,
   "rank": 2,

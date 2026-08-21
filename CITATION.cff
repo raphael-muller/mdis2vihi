@@ -25,7 +25,7 @@ keywords:
   - machine learning
 abstract: >-
   A fully-connected neural network maps, at a single pixel, the 8-band MDIS
-  multispectral reflectance of Mercury (plus the observation emission angle) to a
+  multispectral reflectance of Mercury (plus the mosaic's image-set count) to a
   231-band VIHI-like spectrum on a common 5 nm grid spanning 300-1450 nm. Trained
   on 153 214 co-located MDIS/MASCS-VIRS pairs with a group split on observation
   identifier, it is applied pixel by pixel over the MESSENGER/MDIS global mosaic

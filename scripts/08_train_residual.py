@@ -56,7 +56,7 @@ from mdis2vihi.correction.residual import (ModelPlusCorrection, LowRankCorrectio
                                          correction_basis)
 
 BASE_MODEL_CKPT = REPO / "runs/final/lightning_logs/version_0/checkpoints/epoch=93-step=10340.ckpt"
-BASE_MODEL_STATS = REPO / "runs/final/emission_stats.json"
+BASE_MODEL_STATS = REPO / "runs/final/image_count_stats.json"
 SIMPAIRS = REPO / "data/processed/simpairs_S2.parquet"
 PAIRS = REPO / "data/processed/pairs.parquet"
 SPLITS = REPO / "data/processed/splits.parquet"
@@ -67,21 +67,21 @@ BATCH, MAX_EPOCHS = 1024, 100
 GRID = np.arange(300.0, 1455.0, 5.0)
 
 
-def to9(x8, emission, mean, std):
-    e = np.asarray(emission, np.float32).reshape(-1, 1)
+def to9(x8, count, mean, std):
+    e = np.asarray(count, np.float32).reshape(-1, 1)
     return np.concatenate([x8, (e - mean) / std], axis=1).astype(np.float32)
 
 
 def load_real(val_fold, mean, std):
     """Real training pairs: the background the residual must leave alone."""
-    pairs = pd.read_parquet(PAIRS, columns=["ref_id", "mdis_iof", "mdis_emission"])
+    pairs = pd.read_parquet(PAIRS, columns=["ref_id", "mdis_iof", "mdis_image_count"])
     lsf = pd.read_parquet(TARGET, columns=["ref_id", TARGET_COL])
     splits = pd.read_parquet(SPLITS)
     df = pairs.merge(lsf, on="ref_id").merge(splits, on="ref_id")
     df = df[~df.split.isin([val_fold, "test"])]
     x8 = np.stack(df.mdis_iof.to_list()).astype(np.float32)
     y = np.stack(df[TARGET_COL].to_list()).astype(np.float32)
-    return to9(x8, df.mdis_emission.to_numpy(), mean, std), y
+    return to9(x8, df.mdis_image_count.to_numpy(), mean, std), y
 
 
 def main():
@@ -107,7 +107,7 @@ def main():
     L.seed_everything(args.seed, workers=True)
 
     stats = json.loads(BASE_MODEL_STATS.read_text(encoding="utf-8"))
-    emean, estd = float(stats["emission_mean"]), float(stats["emission_std"])
+    emean, estd = float(stats["image_count_mean"]), float(stats["image_count_std"])
     base_model = load_base_model(BASE_MODEL_CKPT)
 
     sim = pd.read_parquet(args.simpairs)
@@ -116,7 +116,7 @@ def main():
             f"{args.simpairs} carries no ref_id, so train and validation cannot be "
             "separated by footprint, rebuild it with scripts/07_build_simpairs.py.")
     x_sim = to9(np.stack(sim.mdis_iof.to_list()).astype(np.float32),
-                sim.mdis_emission.to_numpy(), emean, estd)
+                sim.mdis_image_count.to_numpy(), emean, estd)
     y_sim = np.stack(sim[TARGET_COL].to_list()).astype(np.float32)
     sim_ref = sim.ref_id.to_numpy()
     print(f"simulated pairs: {len(x_sim)} from {len(np.unique(sim_ref))} footprints",
@@ -182,7 +182,7 @@ def main():
         "_comment": "Rank-constrained residual of the hollow-correction layer, "
                     "trained by scripts/08_train_residual.py. Read by "
                     "scripts/tools/build_hollow_correction.py.",
-        "emission_mean": emean, "emission_std": estd,
+        "image_count_mean": emean, "image_count_std": estd,
         "best_ckpt": best.relative_to(REPO).as_posix(),
         "seed": args.seed, "rank": args.rank, "coef_hidden": list(coef_hidden),
         "res_hidden": [128, 128], "learn_basis": False, "val_fold": args.val_fold,

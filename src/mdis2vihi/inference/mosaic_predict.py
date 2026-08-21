@@ -61,8 +61,8 @@ def predict_mosaic(
     predictor: int | None = None,
     forward_batch: int = 200_000,
     roi: tuple[int, int, int, int] | None = None,
-    emission_band: int | None = None,
-    emission_stats: tuple[float, float] | None = None,
+    count_band: int | None = None,
+    count_stats: tuple[float, float] | None = None,
     band_indexes: Sequence[int] = MDIS_IF_BANDS,
     progress: bool = True,
 ) -> Path:
@@ -107,9 +107,9 @@ def predict_mosaic(
     """
     if device == "auto":
         device = "cuda" if torch.cuda.is_available() else "cpu"
-    if emission_band is not None and emission_stats is None:
-        raise ValueError("emission_band set but emission_stats (mean, std) not given")
-    read_bands = list(band_indexes) + ([emission_band] if emission_band is not None else [])
+    if count_band is not None and count_stats is None:
+        raise ValueError("count_band set but count_stats (mean, std) not given")
+    read_bands = list(band_indexes) + ([count_band] if count_band is not None else [])
     in_features = len(read_bands)
     model = _load_model(Path(ckpt_path), device, in_features=in_features)
 
@@ -171,9 +171,9 @@ def predict_mosaic(
                 n_valid = int(valid.sum())
                 if n_valid > 0:
                     x = data.transpose(1, 2, 0)[valid]
-                    if emission_band is not None:
-                        emean, estd = emission_stats
-                        x[:, -1] = (x[:, -1] - emean) / estd  # I/F raw, emission z-standardized
+                    if count_band is not None:
+                        emean, estd = count_stats
+                        x[:, -1] = (x[:, -1] - emean) / estd  # I/F raw, band 9 z-standardized
                     preds = np.empty((n_valid, N_BANDS_OUT), dtype=np.float32)
                     for j in range(0, n_valid, forward_batch):
                         xt = torch.from_numpy(x[j : j + forward_batch]).to(device)

@@ -173,7 +173,7 @@ def main():
     refs = pool.ref_id.to_numpy()
     h_naive = np.stack(pool.naive_5nm.to_list()).astype(np.float64)
     h_lsf = np.stack(pool.lsf_5p0.to_list()).astype(np.float64)
-    h_emis = pool.mdis_emission.to_numpy(np.float64)
+    h_emis = pool.mdis_image_count.to_numpy(np.float64)
 
     # Backgrounds come from the training folds only: validation and test stay untouched.
     pairs = pd.read_parquet(PAIRS, columns=["ref_id", "lat_center", "lon_center",
@@ -235,7 +235,7 @@ def main():
     ref = np.concatenate([refs[ok_pure], mix_ref[ok_mix]])
     out = pd.DataFrame({"ref_id": ref.astype(np.int64),
                         "mdis_iof": list(x.astype(np.float64)),
-                        "mdis_emission": e.astype(np.float64),
+                        "mdis_image_count": e.astype(np.float64),
                         "lsf_5p0": list(y.astype(np.float64))})
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     out.to_parquet(args.out, index=False)
@@ -247,7 +247,7 @@ def main():
         rep = {"n": len(out), "n_reference": len(ref), "same_count": len(out) == len(ref)}
         if rep["same_count"]:
             for col, got in (("mdis_iof", x), ("lsf_5p0", y),
-                             ("mdis_emission", e)):
+                             ("mdis_image_count", e)):
                 want = (np.stack(ref[col].to_list()).astype(np.float64)
                         if ref[col].dtype == object else ref[col].to_numpy(np.float64))
                 rep[col] = {"max_abs_diff": float(np.nanmax(np.abs(got - want))),

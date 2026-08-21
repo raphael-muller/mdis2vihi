@@ -56,12 +56,6 @@ site assembles the map into one global file; the
 [PDS Cartography and Imaging Sciences Node](https://pds-imaging.jpl.nasa.gov/volumes/mess.html)
 archives the same data as 54 separate tiles, which this code does **not** read.
 
-**Check the band order before running anything.** The GeoTIFF carries no PDS
-labels: band identity was stripped at production, and the table below is what this
-project established from the data itself (see
-[`notebooks/01_check_input_data.ipynb`](../notebooks/01_check_input_data.ipynb)).
-A file with the bands in another order would run and give nonsense.
-
 23040 × 11521, **17 bands, Float32**, nodata `-3.4028226550889e+38`, block shape
 `(1, 23040)`; the file is *line-stripped*, so read full-row windows and never load it
 whole.
@@ -69,8 +63,8 @@ whole.
 | Bands | Content |
 |-------|---------|
 | 1–8 | The 8 MDIS/WAC I/F filters, ascending: **433, 480, 559, 629, 749, 828, 899, 996 nm** |
-| 9 | **Emission angle in degrees**, 0–90 |
-| 10–17 | 1σ uncertainty of I/F, same order as 1–8 |
+| 9 | **Count of 8-colour image sets** averaged into that pixel: an integer, 0 to 86 |
+| 10–17 | Standard deviation of that average, one per I/F band, same order as 1–8 |
 
 The model uses **bands 1–9**.
 

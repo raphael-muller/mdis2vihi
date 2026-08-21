@@ -1,0 +1,16 @@
+{
+  "image_count_mean": 21.470380783081055,
+  "image_count_std": 17.301841735839844,
+  "in_features": 9,
+  "hidden": [
+    128,
+    256,
+    256
+  ],
+  "activation": "gelu",
+  "target_col": "lsf_5p0",
+  "seed": 42,
+  "best_ckpt": "runs/final/lightning_logs/version_0/checkpoints/epoch=93-step=10340.ckpt",
+  "note": "input = 8 raw MDIS I/F + (band 9 - image_count_mean)/image_count_std; inference: scripts/04_predict_mosaic.py --count-band 9 --count-stats this.json",
+  "band9_meaning": "count of 8-colour image sets at the pixel (PDS MDR v3+ backplane a), see docs/DATA.md"
+}

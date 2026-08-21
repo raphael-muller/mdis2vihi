@@ -317,7 +317,7 @@ def process_chunks(
                         "ang_ph": float(meta.ang_ph),
                         "foot_geom": meta.foot_geom,
                         "mdis_iof": mean_17[:8].tolist(),
-                        "mdis_emission": float(mean_17[8]),
+                        "mdis_image_count": float(mean_17[8]),
                         "mdis_sigma": mean_17[9:17].tolist(),
                         "photom_iof_5nm": photom_iof_5nm.tolist(),
                     }

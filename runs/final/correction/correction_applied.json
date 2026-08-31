@@ -1,20 +1,20 @@
 {
   "description": "Hollow-contrast correction layer, unionbb0.8 configuration. Built and applied as described in docs/REPRODUCTION.md, steps 6-10.",
   "formula": "output = deliverable + g(lon,lat,reflectance)*[c(x) @ B.T] ; g = scale*[(Thomas union HORNET 0.8) inter bright+blue(global Mercury ref.)]",
-  "base_mosaic": "runs/final/mdis2vihi_global_final_deflate.tif",
-  "base_model_ckpt": "runs/final/lightning_logs/version_0/checkpoints/epoch=93-step=10340.ckpt",
+  "base_mosaic": "runs\\final\\mdis2vihi_global_final_deflate.tif",
+  "base_model_ckpt": "runs\\final\\lightning_logs\\version_0\\checkpoints\\epoch=93-step=10340.ckpt",
   "residual": {
     "ckpt": "runs/final/correction/residual_rank2.ckpt",
     "rank": 2,
     "coef_hidden": [
       32
     ],
-    "base_md5": "595997584ace",
+    "base_md5": "b2174a3a50e9",
     "n_params_coef": 386
   },
   "selection": {
     "source": "unionbb0.8",
-    "scale": 0.5,
+    "scale": 0.797,
     "z_thresh": 0.5,
     "buffer_km": 1.0,
     "margin": 1.5,
@@ -42,7 +42,7 @@
       "mu_ratio": 0.5973916601494608,
       "sd_ratio": 0.023825294193012523,
       "calibration": "footprints",
-      "source": "data/processed/pairs.parquet"
+      "source": "data\\processed\\pairs.parquet"
     }
   },
   "image_count": {
@@ -89,21 +89,21 @@
     "spatial_selection": "hollow_selection_spatial.tif",
     "basis": "residual_basis_rank2.npz"
   },
-  "build_duration_s": 27.9,
+  "build_duration_s": 15.1,
   "application": {
     "mode": "rewrite",
     "output": "runs/final/mdis2vihi_global_final_postcorr_unionbb0.8_deflate.tif",
     "source": "runs/final/mdis2vihi_global_final_deflate.tif",
-    "size_bytes": 158375949727,
+    "size_bytes": 159344805730,
     "source_size_bytes": 158371636788,
     "audit": {
       "n_pixels_written": 115112,
       "n_pixels_nodata_skipped": 0,
-      "delta_max_abs": 0.12505994737148285,
+      "delta_max_abs": 0.14706452190876007,
       "n_negative_after": 0,
-      "delta_med_996": 0.0056298114359378815,
+      "delta_med_996": 0.003910783678293228,
       "n_windows": 414,
-      "duration_s": 2769.8
+      "duration_s": 1264.3
     },
     "verification": {
       "corrected_tiles": [
@@ -114,7 +114,7 @@
           ],
           "n_selected_pixels": 1810,
           "max_diff_outside_selection": 0.0,
-          "max_diff_inside_selection": 0.009581200778484344
+          "max_diff_inside_selection": 0.010339953005313873
         },
         {
           "tile": [
@@ -123,7 +123,7 @@
           ],
           "n_selected_pixels": 182,
           "max_diff_outside_selection": 0.0,
-          "max_diff_inside_selection": 0.02548941969871521
+          "max_diff_inside_selection": 0.025432951748371124
         },
         {
           "tile": [
@@ -132,7 +132,7 @@
           ],
           "n_selected_pixels": 52,
           "max_diff_outside_selection": 0.0,
-          "max_diff_inside_selection": 0.0033167898654937744
+          "max_diff_inside_selection": 0.008166171610355377
         }
       ],
       "untouched_tile": {
@@ -144,6 +144,6 @@
       },
       "exact_reversibility": true
     },
-    "total_duration_min": 46.3
+    "total_duration_min": 21.1
   }
 }

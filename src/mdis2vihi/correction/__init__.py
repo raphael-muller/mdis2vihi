@@ -5,7 +5,7 @@ hollows, which the model under-predicts because the quality filter keeps almost 
 hollow-floor footprint in training:
 
     output = deliverable(x) + g(lon, lat, reflectance) * [ c(x) @ B.T ]
-    g      = 0.42 * [ (Thomas 2016 union HORNET 0.8) inter bright+blue ]
+    g      = 0.797 * [ (Thomas 2016 union HORNET 0.8) inter bright+blue ]
 
 The deliverable IS the output of the fixed base model: it is not recomputed, the correction
 is added to it. Outside the selection the output is therefore identical to the deliverable

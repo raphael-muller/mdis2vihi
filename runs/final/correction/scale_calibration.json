@@ -14,24 +14,24 @@
   },
   "deliverable_contrast": {
     "Dominici": 1.0274373257613267,
-    "Hopper": 1.4854632998917392,
-    "Tyagaraja": 1.2581770527479563,
-    "Warhol": 1.1418422258596024
+    "Hopper": 1.4854628760082995,
+    "Tyagaraja": 1.258177349594524,
+    "Warhol": 1.1418424971034546
   },
   "s_star": {
-    "Dominici": 0.3,
-    "Hopper": 0.74,
-    "Tyagaraja": 0.47000000000000003,
-    "Warhol": 0.375
+    "Dominici": 0.595,
+    "Hopper": 1.75,
+    "Tyagaraja": 0.85,
+    "Warhol": 0.745
   },
   "loo_error": {
-    "Dominici": 0.07716993260053173,
-    "Hopper": -0.13905680069708204,
-    "Tyagaraja": -0.025217013061359816,
-    "Warhol": 0.04868312560451371
+    "Dominici": 0.056525717918362695,
+    "Hopper": -0.1622687725079861,
+    "Tyagaraja": -0.014630256997866464,
+    "Warhol": 0.025099000402733385
   },
-  "loo_abs_error_median": 0.06292652910252272,
-  "uncorrected_abs_error_median": 0.17508728453238032,
-  "scale_to_deploy": 0.4225,
+  "loo_abs_error_median": 0.04081235916054804,
+  "uncorrected_abs_error_median": 0.17508714891045418,
+  "scale_to_deploy": 0.7975,
   "residual_ckpt": "runs/final/correction/residual_rank2.ckpt"
 }

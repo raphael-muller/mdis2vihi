@@ -94,9 +94,9 @@ def main():
     # values the delivered layer was built with.
     #
     # `--scale` is calibrated, not chosen: `calibrate_hollow_scale.py` derives it and
-    # writes `scale_calibration.json`. No single value fits every crater (0.300 at
-    # Dominici to 0.740 at Hopper), so the deployed value is their median; leave-one-out
-    # puts the residual contrast error at 0.063 in the median, against 0.175 uncorrected.
+    # writes `scale_calibration.json`. No single value fits every crater (0.595 at
+    # Dominici to 1.750 at Hopper), so the deployed value is their median; leave-one-out
+    # puts the residual contrast error at 0.041 in the median, against 0.175 uncorrected.
     #
     # Measured on the crater footprints, `--z-thresh` does not change hollow recall
     # anywhere in [0, 1], it only trades background false positives (12.0 % at 0, 7.7 % at
@@ -105,7 +105,7 @@ def main():
     # and `--max-area` move recall by less than a point.
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default="runs/final/correction")
-    ap.add_argument("--scale", type=float, default=0.422)   # calibrate_hollow_scale.py
+    ap.add_argument("--scale", type=float, default=0.797)   # calibrate_hollow_scale.py
     ap.add_argument("--z-thresh", type=float, default=0.5)
     ap.add_argument("--buffer-km", type=float, default=1.0)
     ap.add_argument("--margin", type=float, default=1.5)
@@ -135,7 +135,7 @@ def main():
     print(f"spatial selection: {len(thomas)} Thomas disks (R {gmeta['thomas_R_km'][0]:.1f}-"
           f"{gmeta['thomas_R_km'][2]:.1f} km) union {len(hornet)} HORNET {args.hornet} polygons "
           f"(+{args.buffer_km} km), {gmeta['hornet']}", flush=True)
-    mask = S.rasterize_spatial(thomas + hornet, transform, W, H)
+    mask = S.rasterize_spatial(thomas + hornet, transform, W, H, crs)
     n_spatial = int(mask.sum())
     print(f"  -> {n_spatial} pixels on ({100.0*n_spatial/(W*H):.4f} % of the mosaic), "
           f"{time.time()-t0:.0f} s", flush=True)

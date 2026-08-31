@@ -1,12 +1,31 @@
 """Build the training target on the common 5 nm grid, matched to the VIRS line-spread
 function.
 
-Step 1 resamples by linear interpolation. The 5 nm grid being coarser than the native
-sampling (2.33 nm/px on the VIS detector, ~3.4 nm/px on the NIR), that amounts to
+Step 1 resamples by linear interpolation. The 5 nm grid is coarser than the native
+sampling of VIRS, which is 2.33 nm between adjacent detector channels on **both** arrays,
+not a per-pixel length: the wavelength calibration published in the VIRS SIS V5.4
+(CHANNEL_WAVELENGTHS, item 26, from the calibration report eq. 6.5) reads
+
+    lambda = 215.16 + 2.330 n - 1.89e-5 n^2  nm   (VIS array, 512 channels)
+    lambda = 896.50 + 2.330 n + 1.48e-5 n^2  nm   (NIR array, 256 channels)
+
+with n the channel number, so the local step runs 2.331 -> 2.311 nm across the VIS array
+and 2.330 -> 2.337 nm across the NIR one. Checked against the data rather than trusted:
+inverting those two relations on the delivered wavelengths returns integer channel
+numbers to a median 0.01 channel on the NIR and 0.05 on the VIS, and the measured step of
+the stored spectra is 2.325 nm below 1050 nm and 2.34 nm above. The 300-1050 and
+850-1450 nm figures quoted for the two detectors are their sensitivity ranges, not the
+span of their channels, which is why they cannot be divided by 512 and 256 to get a
+dispersion.
+
+Resampling a 2.33 nm spectrum onto a 5 nm grid by interpolation therefore amounts to
 point-sampling: it keeps the full per-channel noise instead of averaging it. This step
-redoes the resampling as a Gaussian average matched to the instrument response, which
-removes 26-30 % of the high-frequency noise; genuine gaps (0.1 % of the grid points, in
-the far NIR tail) stay NaN rather than being bridged.
+redoes the resampling as a Gaussian average matched to the instrument response, whose
+full width at half maximum is 4.7 nm (VIRS SIS V5.4 Table 1, and Barraud thesis
+Tab. 2.2.3): sampling and resolution are distinct quantities, and VIRS is read out at
+about two samples per resolution element. The average removes 26-30 % of the
+high-frequency noise; genuine gaps (0.1 % of the grid points, in the far NIR tail) stay
+NaN rather than being bridged.
 
   --build   Re-read `spectres-002.dat` and resample two ways: `naive`, reproducing step 1,
             and `lsf_*` at FWHM 4.7, 5.0 and 7.0 nm. **`lsf_5p0` is the target of the
@@ -17,8 +36,9 @@ the far NIR tail) stay NaN rather than being bridged.
 
   --diag-b  Per-band relation between the target convolved with each MDIS/WAC bandpass and
             the real MDIS reflectance: slope, offset, scatter, and how much the eight
-            residuals correlate with each other. `07_build_simpairs.py` reads all four.
-            Writes
+            residuals correlate with each other. A diagnostic, read by no other step: it is
+            what establishes that the MDIS-MASCS photometric mismatch is a clean per-band
+            scalar, so the input side needs no bandpass convolution. Writes
             `virs_wac_consistency.csv` and `virs_wac_resid_corr.csv`.
 """
 
@@ -182,7 +202,16 @@ def _stack(series) -> np.ndarray:
 
 def floor_report(k: int = 5):
     """k-NN lower bound for the naive target and each lsf variant, on the test split and
-    over the bands finite in all of them."""
+    over the bands finite in all of them.
+
+    The neighbourhood is in MDIS input space, not on the ground, and deliberately so: the
+    bound has to be the variance the model cannot resolve, and the model sees only the
+    input vector. Geographic neighbours are a different measurement (mostly along-track
+    repeatability here, 15.7 km away and same-observation three times out of four); they
+    are reported beside the input-space ones by `scripts/05_eval_final.py`. What is
+    compared here is targets, not neighbourhoods: the same neighbourhoods are reused for
+    every variant, so the ranking measures how much never-learnable noise each resampling
+    leaves in the target."""
     from mdis2vihi.eval.metrics import knn_floor
 
     lsf = pd.read_parquet(LSF_TARGET)

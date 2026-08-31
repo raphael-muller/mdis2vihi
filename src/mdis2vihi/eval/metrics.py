@@ -187,6 +187,19 @@ def knn_floor(Xin, Y, k=5, device=None):
     below by the target variance in a small input neighbourhood. Averaging that variance
     over the `k` nearest neighbours estimates it. Pure torch, no scikit-learn.
 
+    **The neighbourhood is in input space, and that is what makes this a bound.** The
+    model is a deterministic function of the input vector, so two footprints with the
+    same input necessarily receive the same prediction and the spread of their targets is
+    irreducible for it. Neighbours picked by ground distance instead do not bound this
+    model, since two spots a few km apart usually have different MDIS inputs which the
+    model is free to map to different spectra; that variant measures a different thing,
+    namely what a spatially aware model could hope to explain, and it is reported next to
+    this one in `runs/final/eval/final_floor_variants.csv` (see `scripts/05_eval_final.py`
+    for the six neighbourhoods and their median separation). On the delivered test split
+    the geographic neighbours sit 15.7 km away and belong to the same observation three
+    times out of four, so that floor mostly measures along-track repeatability: forbidding
+    same-observation neighbours raises it from 2.92e-5 to 3.34e-5, above this one.
+
     The value is convention-dependent. Two biases pull opposite ways: `np.nanvar` uses
     ddof = 0, biasing each neighbourhood low by (k-1)/k (20 % at k = 5), while the finite
     neighbourhood width biases it up. On the delivered test split the raw estimate runs

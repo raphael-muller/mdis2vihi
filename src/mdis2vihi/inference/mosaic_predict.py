@@ -172,8 +172,8 @@ def predict_mosaic(
                 if n_valid > 0:
                     x = data.transpose(1, 2, 0)[valid]
                     if count_band is not None:
-                        emean, estd = count_stats
-                        x[:, -1] = (x[:, -1] - emean) / estd  # I/F raw, band 9 z-standardized
+                        cmean, cstd = count_stats
+                        x[:, -1] = (x[:, -1] - cmean) / cstd  # I/F raw, band 9 z-standardized
                     preds = np.empty((n_valid, N_BANDS_OUT), dtype=np.float32)
                     for j in range(0, n_valid, forward_batch):
                         xt = torch.from_numpy(x[j : j + forward_batch]).to(device)

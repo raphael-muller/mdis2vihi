@@ -9,7 +9,7 @@ distributed rather than how large it is on average:
   * spectral angle per terrain type                       -> final_per_terrain.csv
   * spectral angle against the MASCS quality flags        -> final_diagnostics.json
   * spectral angle against observing geometry             -> final_diagnostics.json
-  * k-NN lower bound under four neighbourhood definitions -> final_floor_variants.csv
+  * k-NN lower bound under six neighbourhood definitions  -> final_floor_variants.csv
   * per-parameter reliability ceiling and how much of it the model reaches
                                                           -> final_param_ceiling.csv
   * per-band and per-parameter fidelity (r, OLS slope, Lin's CCC, bias)
@@ -18,6 +18,18 @@ distributed rather than how large it is on average:
 
 It also refreshes the metric panel inside `final_test_metrics.json`, merging into the
 file rather than rewriting it, so the keys only `03_train_final.py` produces survive.
+
+One caveat on the word "test". The split is a true hold-out in the sense that matters for
+fitting: it is group-disjoint by `obs_id`, no gradient ever saw it, and neither the early
+stop nor the learning-rate schedule reads it. It is not virgin in the model-selection
+sense, because the screening campaign scored every candidate lever on this same split
+rather than on a fresh one, which is repeated use of a hold-out and can flatter the number
+it finally reports. Two things bound that risk. The published criterion is a *ratio* to
+the k-NN floor recomputed on the same split, not an absolute error, so a split that
+happens to be easy moves numerator and denominator together. And the error is ordered
+val 4.287e-5 < train 4.376e-5 < test 4.650e-5 (`final_per_split.csv`): the test split
+scores 8 % worse than the fold the model early-stopped on, which is the opposite of what
+over-use of a hold-out produces.
 
 Run:    python scripts/05_eval_final.py
 Writes: runs/final/eval/final_*
@@ -47,6 +59,10 @@ from mdis2vihi.lit.spectral_module import SpectralLitModule  # noqa: E402
 from mdis2vihi.eval.metrics import (sam_deg, sga_deg, pearson,  # noqa: E402
                                     metric_set, per_band, param_fidelity,
                                     reliability_ceiling)
+
+# Datum sphere of the mosaic (2 439 400 m), in km: this is great-circle arithmetic on the
+# sphere, not a projection, so it does not go through pyproj (see CLAUDE.md).
+R_MERC_KM = 2439.4
 
 PAIRS = REPO_ROOT / "data/processed/pairs.parquet"
 SPLITS = REPO_ROOT / "data/processed/splits.parquet"
@@ -80,10 +96,10 @@ def load():
     return df
 
 
-def to_arrays(d, emean, estd):
+def to_arrays(d, cmean, cstd):
     X8 = np.stack(d.mdis_iof.to_list()).astype(np.float32)
-    E = d.mdis_image_count.to_numpy(np.float32)[:, None]
-    X9 = np.concatenate([X8, (E - emean) / estd], axis=1).astype(np.float32)
+    C = d.mdis_image_count.to_numpy(np.float32)[:, None]
+    X9 = np.concatenate([X8, (C - cmean) / cstd], axis=1).astype(np.float32)
     Y = np.stack(d[TARGET_COL].to_list()).astype(np.float32)
     return X8, X9, Y
 
@@ -92,13 +108,51 @@ def knn_floor_idx(idx, Y):
     return float(np.nanmean(np.nanvar(Y[idx], axis=1)))
 
 
-def knn_idx(Xq, Xref, k, drop_self):
-    """k nearest neighbours of Xq among Xref (torch cdist)."""
+def unit_sphere(lon_deg, lat_deg):
+    """(lon, lat) in degrees -> 3-D coordinates on the unit sphere.
+
+    A neighbour search on these coordinates ranks by chord length, which is monotone in
+    the great-circle arc, so it returns the true geographic neighbours. Searching on
+    (lon, lat) degrees directly does not: a degree of longitude is worth only cos(lat)
+    degrees of latitude, and 359.9 deg sits next to 0.1 deg, not 359.8 deg away.
+    """
+    lon, lat = np.radians(lon_deg), np.radians(lat_deg)
+    return np.c_[np.cos(lat) * np.cos(lon), np.cos(lat) * np.sin(lon), np.sin(lat)]
+
+
+def knn_idx(Xq, Xref, k, drop_self, groups_q=None, groups_ref=None, block=2048):
+    """k nearest neighbours of Xq among Xref (torch cdist), by blocks of query rows.
+
+    The full distance matrix would be 13 GB for the test set against the training set, so
+    the query is walked in blocks. `groups_q` / `groups_ref` forbid neighbours sharing a
+    group label (used to ask what a neighbourhood looks like once same-observation
+    neighbours are excluded).
+    """
     A = torch.from_numpy(np.ascontiguousarray(Xq)).double()
     B = torch.from_numpy(np.ascontiguousarray(Xref)).double()
     kk = k + 1 if drop_self else k
-    idx = torch.cdist(A, B).topk(kk, largest=False).indices.numpy()
-    return idx[:, 1:] if drop_self else idx
+    out = []
+    for start in range(0, len(A), block):
+        stop = min(start + block, len(A))
+        D = torch.cdist(A[start:stop], B)
+        if groups_q is not None:
+            same = torch.from_numpy(groups_q[start:stop, None] == groups_ref[None, :])
+            D[same] = float("inf")
+        idx = D.topk(kk, largest=False).indices.numpy()
+        out.append(idx[:, 1:] if drop_self else idx)
+    return np.concatenate(out, axis=0)
+
+
+def neighbourhood_stats(idx, lon, lat, obs, lon_ref=None, lat_ref=None, obs_ref=None):
+    """Median great-circle distance to the k neighbours, and how many share the obs_id."""
+    lon_ref = lon if lon_ref is None else lon_ref
+    lat_ref = lat if lat_ref is None else lat_ref
+    obs_ref = obs if obs_ref is None else obs_ref
+    p1, p2 = np.radians(lat)[:, None], np.radians(lat_ref[idx])
+    dlon = np.radians(lon_ref[idx] - lon[:, None])
+    a = np.sin((p2 - p1) / 2) ** 2 + np.cos(p1) * np.cos(p2) * np.sin(dlon / 2) ** 2
+    km = 2 * R_MERC_KM * np.arcsin(np.sqrt(np.clip(a, 0.0, 1.0)))
+    return float(np.median(km)), float(np.mean(obs_ref[idx] == obs[:, None]))
 
 
 def sam_floor_idx(idx, Y):
@@ -136,7 +190,7 @@ def main():
     require_inputs()
     EVAL_DIR.mkdir(parents=True, exist_ok=True)
     df = load()
-    emean, estd = STATS["image_count_mean"], STATS["image_count_std"]
+    cmean, cstd = STATS["image_count_mean"], STATS["image_count_std"]
 
     sub = {
         "train": df[~df.split.isin(["fold0", "test"])],
@@ -153,7 +207,7 @@ def main():
     pred = {}
     per_split = []
     for name, d in sub.items():
-        X8, X9, Y = to_arrays(d, emean, estd)
+        X8, X9, Y = to_arrays(d, cmean, cstd)
         with torch.no_grad():
             Yp = lit.model(torch.from_numpy(X9)).numpy().astype(np.float64)
         Yt = Y.astype(np.float64)
@@ -228,27 +282,45 @@ def main():
     }
 
     # ---- floor variants (LSF target) ----
+    # The headline floor defines the neighbourhood **in input space**, and that is not a
+    # convenience: the model is a deterministic function of the nine-band vector, so two
+    # footprints with the same input necessarily receive the same prediction and the
+    # spread of their targets is irreducible for it. A neighbourhood defined by ground
+    # distance does not bound this model (two spots 15 km apart usually have different
+    # MDIS inputs, which the model is free to map to different spectra); it measures
+    # something else, namely how much of the target a spatially aware model could hope to
+    # explain. Both are reported, with the median neighbour distance and the share of
+    # neighbours coming from the same observation, which is what makes them readable.
     X8tr, _, Ytr, dtr = pred["train"]
-    latlon_te = dt[["lon_center", "lat_center"]].to_numpy(float)
-    latlon_tr = dtr[["lon_center", "lat_center"]].to_numpy(float)
+    lon_te, lat_te = dt.lon_center.to_numpy(float), dt.lat_center.to_numpy(float)
+    lon_tr, lat_tr = dtr.lon_center.to_numpy(float), dtr.lat_center.to_numpy(float)
+    obs_te, obs_tr = dt.obs_id.to_numpy(), dtr.obs_id.to_numpy()
+    sphere_te, sphere_tr = unit_sphere(lon_te, lat_te), unit_sphere(lon_tr, lat_tr)
+
+    def add(tag, idx, Yref, lon_ref=None, lat_ref=None, obs_ref=None):
+        f = knn_floor_idx(idx, Yref)
+        km, share = neighbourhood_stats(idx, lon_te, lat_te, obs_te, lon_ref, lat_ref, obs_ref)
+        rows.append((tag, f, mse_s.mean() / f, sam_floor_idx(idx, Yref), km, share))
+
     rows = []
-    # input-space, X_test (self-drop)
-    i = knn_idx(X8t, X8t, 5, drop_self=True)
-    rows.append(("input_Xtest", knn_floor_idx(i, Ytt), mse_s.mean() / knn_floor_idx(i, Ytt),
-                 sam_floor_idx(i, Ytt)))
-    # input-space, X_train neighbours of test
-    i = knn_idx(X8t, X8tr, 5, drop_self=False)
-    f = knn_floor_idx(i, Ytr)
-    rows.append(("input_Xtrain", f, mse_s.mean() / f, sam_floor_idx(i, Ytr)))
-    # great-circle, X_test
-    i = knn_idx(latlon_te, latlon_te, 5, drop_self=True)
-    f = knn_floor_idx(i, Ytt)
-    rows.append(("greatcircle_Xtest", f, mse_s.mean() / f, sam_floor_idx(i, Ytt)))
-    # great-circle, X_train
-    i = knn_idx(latlon_te, latlon_tr, 5, drop_self=False)
-    f = knn_floor_idx(i, Ytr)
-    rows.append(("greatcircle_Xtrain", f, mse_s.mean() / f, sam_floor_idx(i, Ytr)))
-    fv = pd.DataFrame(rows, columns=["neighbourhood", "mse_floor", "mlp_over_floor", "sam_floor"])
+    # input-space, neighbours inside the test split
+    add("input_Xtest", knn_idx(X8t, X8t, 5, drop_self=True), Ytt)
+    # input-space, same but never inside the same observation
+    add("input_Xtest_crossobs",
+        knn_idx(X8t, X8t, 5, drop_self=True, groups_q=obs_te, groups_ref=obs_te), Ytt)
+    # input-space, neighbours taken from the training split
+    add("input_Xtrain", knn_idx(X8t, X8tr, 5, drop_self=False), Ytr, lon_tr, lat_tr, obs_tr)
+    # ground distance, neighbours inside the test split
+    add("greatcircle_Xtest", knn_idx(sphere_te, sphere_te, 5, drop_self=True), Ytt)
+    # ground distance, never inside the same observation: the same-track neighbours that
+    # dominate the row above are what make it a repeatability measurement rather than a bound
+    add("greatcircle_Xtest_crossobs",
+        knn_idx(sphere_te, sphere_te, 5, drop_self=True, groups_q=obs_te, groups_ref=obs_te), Ytt)
+    # ground distance, neighbours taken from the training split
+    add("greatcircle_Xtrain", knn_idx(sphere_te, sphere_tr, 5, drop_self=False), Ytr,
+        lon_tr, lat_tr, obs_tr)
+    fv = pd.DataFrame(rows, columns=["neighbourhood", "mse_floor", "mlp_over_floor",
+                                     "sam_floor", "median_km", "same_obs_share"])
     fv["mlp_over_sam_floor"] = float(np.median(sam)) / fv["sam_floor"]
     fv.to_csv(EVAL_DIR / "final_floor_variants.csv", index=False)
 

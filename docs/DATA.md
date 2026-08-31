@@ -89,7 +89,10 @@ et al. (2020) alongside the mission references.
 **Format.** Every `.dat` sidecar is CSV despite the extension. In
 `spectres-002.dat`, the `waves` and `photom_iof` columns are stringified Python
 lists, parse them with `ast.literal_eval`. Spectra have variable length (341–525
-bins), native dispersion 2.33 nm/px, resolution 4.7 nm FWHM, coverage ≈ 264–1489 nm.
+bins), native sampling 2.33 nm between adjacent detector channels on both VIRS arrays
+(VIRS SIS V5.4, `CHANNEL_WAVELENGTHS`: λ = 215.16 + 2.330·n − 1.89e−5·n² nm on the VIS
+array, λ = 896.50 + 2.330·n + 1.48e−5·n² nm on the NIR one; measured 2.325 nm below
+1050 nm and 2.34 nm above), resolution 4.7 nm FWHM, coverage ≈ 264–1489 nm.
 The good set holds 3 172 422 spectra over 10 177 distinct `obs_id`.
 
 **Quality flags `q1..q4`** (in `quality.dat`):
@@ -108,8 +111,32 @@ leaving the 153 214 pairs over 5 624 `obs_id` that the model trains on. There is
 reflectance threshold at this stage; the `--vis-floor` of `scripts/06_build_hollow_pool.py`
 applies to the hollow pool only.
 
-**Footprints.** Use `shapes.dat::foot_geom`, a WKT `POLYGON` with about ten
-vertices, rather than the four corners in `geometry.dat`. On the ground they run from
+The footprint average filters nodata (`> -1e30`, a sentinel guard) and nothing else, in
+particular **no shadow floor**, and the measurement says none is needed: over 4 000 random
+training footprints (132 663 MDIS pixels), not one pixel falls below I/F 0.01 at 749 nm and
+0.40 % fall below 0.02, those at |lat| around 72° with a median image count of 3, which is
+grazing polar illumination rather than cast shadow. The mosaic being an average of every
+qualifying image, and the MASCS quality filter rejecting the worst-lit footprints (0.14 %
+of pixels below 0.01 under the footprints it rejects, against 0.00 % under those it keeps),
+the darkest cases are gone before this step. A floor here would also have to be applied per
+pixel across all bands at once, never band by band, or the bands would be averaged over
+different pixel sets and the colour ratios would shift.
+
+**Footprints.** `geometry.dat` and `shapes.dat` describe the same elliptical
+footprint in two different ways, and neither is a refinement of the other.
+`geometry.dat` gives the ellipse parameters (centre, `length`, `width`, `azimuth`)
+plus `lat_c1..c4`/`lon_c1..c4`, the four endpoints of its two axes (c1, c2 half a
+`length` from the centre along the major axis, c3, c4 half a `width` along the minor
+one) rather than the corners of a quadrilateral; `shapes.dat::foot_geom` gives the
+boundary of that same ellipse as a WKT `POLYGON` of ten points evenly spaced in
+angle. Use `foot_geom`, because rasterising a footprint needs a closed outline.
+
+The two files also disagree on the **longitude convention**, which is worth checking
+before projecting anything: `geometry.dat` is on `[0°, 360°)` (both `lon_center` and
+`lon_c1..c4`), while the `shapes.dat` WKT is on `[-180°, 180°]`, 51.4 % of its
+footprints carrying negative longitudes. Both seams appear in the WKT: of the 429
+footprints stored in two parts, 296 are split at the antimeridian and 133 at the prime
+meridian. On the ground they run from
 ~300 m to a few tens of km, with a median length of 3.7 km, against an MDIS pixel of
 665 m, which is where the model's error floor comes from.
 
@@ -155,7 +182,7 @@ Written by the pipeline, regenerable.
 | File | Size | Written by | Contents |
 |---|---|---|---|
 | `data/processed/pairs.parquet` | 0.55 GB | step 1 | 153 214 rows, 5 624 `obs_id` |
-| `data/processed/splits.parquet` | small | step 1 | `ref_id → {fold0..fold4, test}` |
+| `data/processed/splits.parquet` | small | step 1 | the train / validation / test split: `ref_id → {fold0..fold4, test}`, drawn by `obs_id` ([how it is used](REPRODUCTION.md#2-step-1-build-the-training-pairs)) |
 | `data/processed/virs_lsf_target.parquet` | 0.99 GB | step 2 | target variants; **`lsf_5p0` is what the deliverable trains on** |
 | `data/interim/` | ~2 GB | steps 1–2 | per-chunk parquets enabling resume |
 

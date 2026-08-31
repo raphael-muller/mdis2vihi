@@ -39,6 +39,7 @@ for _s in (sys.stdout, sys.stderr):
         _s.reconfigure(errors="replace")
 
 from mdis2vihi.correction.layer import CorrectionNetwork, GRID_NM, coef_columns  # noqa: E402
+from mdis2vihi.data.io import lonlat_to_xy, mosaic_projector  # noqa: E402
 from mdis2vihi.correction.residual import load_base_model  # noqa: E402
 
 LD = REPO / "runs/final/correction"
@@ -48,24 +49,27 @@ MDIS = REPO / ("data/raw/mdis_mosaic/MDIS_MDR_20170512_PDS16_64ppd_"
 FOOTPRINTS = REPO / "runs/final/eval/hollows/footprints/crater_footprint_spectra.parquet"
 # Kept out of the residual's training set by scripts/06_build_hollow_pool.py.
 CALIBRATION_CRATERS = ("Dominici", "Hopper", "Tyagaraja", "Warhol")
-R_MERC = 2_439_400.0
+
+
+def to_180(lon):
+    """East longitude as the catalogues store it (0-360) -> the mosaic's [-180, 180)."""
+    lon = np.asarray(lon, float)
+    return np.where(lon > 180.0, lon - 360.0, lon)
 
 
 def sample_bands(lon, lat, path):
     """The 9 MDIS input bands at each footprint centre."""
-    lon = np.where(np.asarray(lon) > 180.0, np.asarray(lon) - 360.0, np.asarray(lon))
-    xy = list(zip(np.radians(lon) * R_MERC, np.radians(np.asarray(lat)) * R_MERC))
     with rasterio.open(path) as ds:
-        v = np.array(list(ds.sample(xy, indexes=list(range(1, 10)))), dtype=np.float64)
+        x, y = lonlat_to_xy(to_180(lon), lat, mosaic_projector(ds.crs))
+        v = np.array(list(ds.sample(zip(x, y), indexes=list(range(1, 10)))),
+                     dtype=np.float64)
     v[v <= -1e30] = np.nan
     return v
 
 
-def gate_at(layer, transform, width, height, lon, lat):
+def gate_at(layer, transform, width, height, lon, lat, crs=None):
     """Is the correction switched on at each footprint centre?"""
-    lon = np.where(np.asarray(lon) > 180.0, np.asarray(lon) - 360.0, np.asarray(lon))
-    col, row = ~transform * (np.radians(lon) * R_MERC,
-                             np.radians(np.asarray(lat)) * R_MERC)
+    col, row = ~transform * lonlat_to_xy(to_180(lon), lat, mosaic_projector(crs))
     row = np.clip(np.floor(row).astype(np.int64), 0, height - 1)
     col = np.clip(np.floor(col).astype(np.int64), 0, width - 1)
     key = np.sort(layer.row.to_numpy().astype(np.int64) * width
@@ -100,20 +104,20 @@ def main():
     layer = pd.read_parquet(LD / cfg["files"]["layer"])
     residual = CorrectionNetwork.from_checkpoint(REPO / cfg["residual"]["ckpt"])
     base = load_base_model(REPO / cfg["base_model_ckpt"])
-    emean, estd = cfg["image_count"]["mean"], cfg["image_count"]["std"]
+    cmean, cstd = cfg["image_count"]["mean"], cfg["image_count"]["std"]
     with rasterio.open(DELIVERABLE) as ds:
-        transform, W, H = ds.transform, ds.width, ds.height
+        transform, W, H, crs = ds.transform, ds.width, ds.height, ds.crs
 
     cr = pd.read_parquet(FOOTPRINTS)
     cr = cr[cr.crater.isin(CALIBRATION_CRATERS)].reset_index(drop=True)
     V = sample_bands(cr.lon.to_numpy(), cr.lat.to_numpy(), MDIS)
     ok = np.all(np.isfinite(V), axis=1)
     x9 = V[ok].astype(np.float32)
-    x9[:, 8] = (x9[:, 8] - emean) / estd
+    x9[:, 8] = (x9[:, 8] - cmean) / cstd
     with torch.no_grad():
         anchor = base(torch.from_numpy(x9)).numpy().astype(np.float64)
     resid = residual.coefficients(x9) @ residual.B.numpy().T
-    g = gate_at(layer, transform, W, H, cr.lon.to_numpy()[ok], cr.lat.to_numpy()[ok])
+    g = gate_at(layer, transform, W, H, cr.lon.to_numpy()[ok], cr.lat.to_numpy()[ok], crs)
     measured = np.vstack(cr.photom_iof_5nm.to_numpy())[ok]
     hol = cr.on_hollow.to_numpy(bool)[ok]
     name = cr.crater.to_numpy()[ok]

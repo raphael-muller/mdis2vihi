@@ -30,3 +30,4 @@ __pycache__/
 .DS_Store
 Thumbs.db
 /runs/band9_screening/**/work_*/
+/.venv_win/

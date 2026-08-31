@@ -8,6 +8,11 @@ polygons, and writes:
     data/processed/pairs.parquet    one row per (MDIS, MASCS) pair
     data/processed/splits.parquet   ref_id -> {test, fold0..fold4}
 
+The second file is the train/validation/test split, drawn once over whole observations:
+10 % of the obs_id go to `test`, the rest are dealt into five folds. The delivered model
+trains on fold1..fold4, validates on fold0 and reports on test; the folds are kept as
+labels so the same file also supports 5-fold cross-validation.
+
 Intermediate per-chunk parquets land in `data/interim/` so a crashed run can
 be resumed by re-running the script (already-written chunks are skipped).
 
@@ -36,6 +41,7 @@ import pyarrow.parquet as pq
 import rasterio
 import rasterio.windows
 import shapely.geometry as sgeom
+from pyproj import Transformer
 from rasterio.features import geometry_mask, geometry_window
 from scipy.interpolate import interp1d
 from shapely import wkt
@@ -53,6 +59,7 @@ from mdis2vihi.data.io import (  # noqa: E402
     MASCS_DIR,
     MASCS_SPECTRA_PATH,
     MDIS_MOSAIC_PATH,
+    mosaic_projector,
     read_mascs_dat,
 )
 
@@ -65,12 +72,39 @@ PROCESSED_DIR = REPO_ROOT / "data" / "processed"
 PAIRS_PATH = PROCESSED_DIR / "pairs.parquet"
 SPLITS_PATH = PROCESSED_DIR / "splits.parquet"
 
-R_MERCURY = 2_439_400.0
 GRID = np.arange(300.0, 1450.0 + 5.0, 5.0)  # 231 bins
 
 # Quality thresholds. Barraud defines q1..q4 and the value each takes on a well-behaved
 # spectrum (q1 ~ 1, q2 ~ 0, q3 up to ~83 %, q4 up to ~100 %); the widths below are this
 # project's. They are strict: q1 alone rejects 91 % of the corpus.
+#
+# The window on q1 is narrower than the published practice and the window on q2 is wider:
+# Besse et al. (2015) work at q1 in [-1, 5] and |q2| < 0.5 %. Measured on the 3 172 422
+# spectra of the good set, the two are not independent knobs and this filter is not the
+# stricter one overall: it keeps 154 064 spectra (4.86 %, 5 629 obs_id) where Besse's joint
+# operating point keeps 388 567 (12.25 %, 6 020 obs_id), 2.5 times more.
+#
+# The |q2| < 5 above does reject almost nothing (q2 alone passes 99.4 % of the corpus,
+# against 9.0 % for q1), but Besse's 0.5 % is NOT implied by the strict q1, contrary to
+# what the shared VIS/NIR-junction meaning of the two indicators suggests: only 24.4 % of
+# the 154 064 delivered spectra already satisfy it (median |q2| 0.954, p90 2.00, p99 3.46),
+# so adopting it would cut the training set by 75.6 %, to 37 612 spectra over 3 818
+# observations. That trade has not been trained; the measurement is the reason not to make
+# it blindly, and the reviewer's remark on q2 stands as a real looseness of this filter.
+#
+# The cost of the narrow q1 is not statistical but compositional: the criterion is a prior
+# on spectral *shape*, and a hollow violates it by construction. None of the 1 209 hollow
+# footprints of the Thomas et al. (2014) catalogue passes it, their median q1 being 1.99.
+# Widening q1 to Besse's window was therefore screened end to end, on the delivered
+# protocol: training on the strict folds plus the 1.15 M spectra the wider window adds
+# (x11.3 pairs, seed 42), scored on the unchanged strict test split. It does recover the
+# unit, closing 52 % of the 1400 nm contrast gap on the four kept-aside hollow craters
+# (1.172 -> 1.257 against 1.334 measured by MASCS), but it breaks the colour panel (CCC on
+# ci_415_750 0.794 -> 0.590, ci_750_415 -0.223, nir_slope -0.163) and over-contrasts the
+# faculae (+0.17 against the MASCS truth, where the delivered model sits at +0.02 to
+# +0.06), while MSE and spectral angle both move the wrong way: 5 mechanical criteria out
+# of 6 fail. Hence: the strict window stays, and hollows are treated a posteriori by the
+# frozen correction layer (scripts/06..08 and src/mdis2vihi/correction/).
 Q1_LO, Q1_HI = 0.9, 1.1
 Q2_ABS_MAX = 5.0
 Q3_MIN = 80.0
@@ -92,40 +126,49 @@ def normalize_lon(lon):
     return ((np.asarray(lon) + 180.0) % 360.0) - 180.0
 
 
-def _project_one(poly_lonlat: sgeom.Polygon):
+def _project_one(poly_lonlat: sgeom.Polygon, tf: Transformer):
     xs = np.array([c[0] for c in poly_lonlat.exterior.coords])
     if float(np.ptp(xs)) > 180.0:
         return None
     ys = np.array([c[1] for c in poly_lonlat.exterior.coords])
-    lon_norm = normalize_lon(xs)
-    return sgeom.Polygon(
-        zip(np.deg2rad(lon_norm) * R_MERCURY, np.deg2rad(ys) * R_MERCURY)
-    )
+    x, y = tf.transform(normalize_lon(xs), ys)
+    return sgeom.Polygon(zip(x, y))
 
 
-def project_polygon(geom):
-    """MASCS WKT (lon° 0–360, lat°) -> projected metres in the MDIS Equirect CRS.
+def project_polygon(geom, tf: Transformer | None = None):
+    """MASCS WKT (lon°, lat°) -> projected metres in the MDIS mosaic CRS.
 
-    Accepts a Polygon or a MultiPolygon (MultiPolygons appear when a footprint
-    straddles the prime meridian, since MASCS uses lon ∈ [0°, 360°] so the seam is
-    at 0/360, not at 180). Returns None for footprints that can't be projected
-    without crossing a discontinuity:
+    The projection itself is PROJ's, through `mdis2vihi.data.io.mosaic_projector`;
+    `tf` reuses a transformer the caller already built, otherwise one comes from the
+    mosaic's own CRS.
+
+    Longitude convention, measured on the whole good set (3 172 422 rows): the
+    `shapes.dat` WKT is on [-180°, 180°], with 51.4 % of the footprints carrying
+    negative longitudes, so it is NOT the [0°, 360°) convention of the rest of the
+    corpus; `geometry.dat` is, both for `lon_center` and for `lon_c1..c4`.
+    `normalize_lon` maps either onto the mosaic's [-180°, 180°).
+
+    Accepts a Polygon or a MultiPolygon: 429 footprints are stored in two parts, 296
+    split at the antimeridian and 133 at the prime meridian, so both seams occur in
+    this file. Returns None for footprints that can't be projected without crossing a
+    discontinuity:
       - any sub-polygon spanning > 180° of MASCS longitude;
       - a MultiPolygon whose projected union straddles the MDIS antimeridian
         (would force a near-full-width window).
     """
+    tf = tf if tf is not None else mosaic_projector()
     if geom.geom_type == "Polygon":
-        return _project_one(geom)
+        return _project_one(geom, tf)
     if geom.geom_type == "MultiPolygon":
         parts: list[sgeom.Polygon] = []
         for sub in geom.geoms:
-            proj = _project_one(sub)
+            proj = _project_one(sub, tf)
             if proj is None:
                 return None
             parts.append(proj)
         mp = sgeom.MultiPolygon(parts)
         minx, _, maxx, _ = mp.bounds
-        if (maxx - minx) > np.pi * R_MERCURY:
+        if (maxx - minx) > float(tf.transform(180.0, 0.0)[0]):
             return None
         return mp
     return None
@@ -141,8 +184,23 @@ def coloc_mean(src, poly_xy: sgeom.Polygon, n_bands: int = 17):
 
     The MDIS nodata value is ~ float32 min (-3.4e38) but `src.nodata` is a Python
     float64, so strict equality can miss the last bit and let nodata values through,
-    which then overflow the float32 sum in pix.mean(). Filtering on both NaN
+    which then overflow the float32 sum of the mean. Filtering on both NaN
     and `value > -1e30` catches every flavour of "garbage".
+
+    That -1e30 is a sentinel guard and not a reflectance floor: raising it into one, to
+    drop shadowed pixels, was measured and is not needed here. On 4 000 random training
+    footprints (132 663 pixels) NO pixel is below I/F 0.01 at 749 nm and 0.40 % are
+    below 0.02, all of them at |lat| ~ 72 deg with a median image count of 3, i.e.
+    grazing polar illumination rather than cast shadow; under the footprints the
+    quality filter rejects, 0.14 % fall below 0.01, so the darkest cases are already
+    screened upstream. Were such a floor ever wanted, it would have to be ONE mask over
+    the pixel, `valid &= data[ref_band] > floor` broadcast to every band: a shadow is
+    dark in all bands, and filtering band by band would average different pixel sets
+    per band and move exactly the colour ratios the model is judged on.
+
+    The 17 band means are reduced in one pass rather than band by band; `mask` is
+    (h, w) and broadcasts against the (17, h, w) window. Bands whose valid count is
+    zero stay NaN, as the caller expects.
     """
     try:
         win = geometry_window(src, [sgeom.mapping(poly_xy)])
@@ -160,13 +218,11 @@ def coloc_mean(src, poly_xy: sgeom.Polygon, n_bands: int = 17):
         invert=True,
         all_touched=True,
     )
-    out = np.full(n_bands, np.nan, dtype=np.float64)
-    for k in range(n_bands):
-        pix = data[k][mask]
-        pix = pix[np.isfinite(pix) & (pix > -1e30)]
-        if pix.size:
-            out[k] = pix.mean()
-    return out
+    valid = mask & np.isfinite(data) & (data > -1e30)
+    n_valid = valid.sum(axis=(1, 2))
+    total = np.where(valid, data, 0.0).sum(axis=(1, 2))
+    return np.divide(total, n_valid,
+                     out=np.full(n_bands, np.nan, dtype=np.float64), where=n_valid > 0)
 
 
 def filter_clean(quality_path: Path) -> pd.DataFrame:
@@ -269,6 +325,7 @@ def process_chunks(
     t0 = time.time()
 
     with rasterio.open(MDIS_MOSAIC_PATH) as src:
+        tf = mosaic_projector(src.crs)
         for ci, chunk in enumerate(
             pd.read_csv(MASCS_SPECTRA_PATH, chunksize=chunksize)
         ):
@@ -299,9 +356,15 @@ def process_chunks(
 
                 photom_iof_5nm = resample_to_grid(waves, photom_iof)
 
-                poly_xy = project_polygon(wkt.loads(meta.foot_geom))
+                poly_xy = project_polygon(wkt.loads(meta.foot_geom), tf)
                 if poly_xy is None:
                     continue
+                # The 17 mosaic bands in file order, so the indices below are 0-based:
+                # [:8] the I/F filters 433..996 nm, [8] band 9 = the count of 8-colour
+                # image sets stacked at that pixel (an instrument covariate, NOT an
+                # angle: the MDR has carried no angle backplane since v3, docs/DATA.md
+                # section 1), [9:17] their standard deviations. The observing angles of
+                # the row (ang_in, ang_em, ang_ph) are the MASCS ones, from geometry.dat.
                 mean_17 = coloc_mean(src, poly_xy)
                 if mean_17 is None or np.all(np.isnan(mean_17[:8])):
                     continue
@@ -362,41 +425,151 @@ def consolidate(written: list[Path], output_path: Path) -> pd.DataFrame:
     return df
 
 
+LAT_EDGES = (30.0, 60.0)   # bands of absolute latitude, in degrees
+N_COUNT_BINS = 3           # image-count terciles
+N_INC_BINS = 2             # incidence, split at its median
+
+
+def _pair_weighted_bins(values: np.ndarray, weights: np.ndarray, n_bins: int) -> np.ndarray:
+    """Bin `values` at the quantiles of their pair-weighted distribution.
+
+    The quantiles are weighted by the number of pairs each obs_id carries, so the bins
+    hold equal numbers of *spectra* rather than equal numbers of observations, which is
+    what the balance of the resulting splits depends on.
+    """
+    order = np.argsort(values)
+    cumulative = np.cumsum(weights[order]) / weights.sum()
+    edges = [np.interp(k / n_bins, cumulative, values[order]) for k in range(1, n_bins)]
+    return np.digitize(values, edges)
+
+
+def _strata(groups: pd.DataFrame) -> np.ndarray:
+    """Stratum of every obs_id: |latitude| band x image-count tercile x incidence half."""
+    weights = groups.n_pairs.to_numpy(float)
+    lat = np.digitize(groups.abs_lat.to_numpy(), LAT_EDGES)
+    count = _pair_weighted_bins(groups.image_count.to_numpy(), weights, N_COUNT_BINS)
+    incidence = _pair_weighted_bins(groups.ang_in.to_numpy(), weights, N_INC_BINS)
+    return (lat * N_COUNT_BINS + count) * N_INC_BINS + incidence
+
+
+def _plain_draw(pairs: pd.DataFrame, rng, test_fraction: float, n_folds: int) -> dict:
+    """The unstratified draw: shuffle the obs_id, cut the test set, deal the rest."""
+    obs_ids = np.array(sorted(pairs.obs_id.unique()))
+    rng.shuffle(obs_ids)
+    n_test = int(round(len(obs_ids) * test_fraction))
+    assignment = {o: "test" for o in obs_ids[:n_test].tolist()}
+    # What is left after the test set is not "the training set cut into folds": the folds
+    # ARE the validation rotation, and they define what training is. The delivered model
+    # validates on fold0 and trains on fold1..fold4; the cross-validation of the campaign
+    # rotates which fold plays validation, always against the same untouched test set.
+    assignment.update(
+        {o: f"fold{i % n_folds}" for i, o in enumerate(obs_ids[n_test:].tolist())}
+    )
+    return assignment
+
+
+def _stratified_draw(pairs: pd.DataFrame, rng, test_fraction: float, n_folds: int) -> dict:
+    """Draw whole obs_id inside strata, filling each split up to its quota of pairs.
+
+    Groups are shuffled inside their stratum and handed out one at a time to whichever
+    split is furthest behind its quota, counted in pairs. Every split therefore ends up
+    with the same stratum composition and, unlike the round-robin deal, with the same
+    number of pairs and not merely the same number of observations.
+    """
+    groups = pairs.groupby("obs_id").agg(
+        n_pairs=("ref_id", "size"),
+        abs_lat=("lat_center", lambda s: s.abs().mean()),
+        image_count=("mdis_image_count", "mean"),
+        ang_in=("ang_in", "mean"),
+    )
+    groups["stratum"] = _strata(groups)
+    # The n_folds + 1 destinations, in the order their quotas are given below: the test set
+    # held out for the final audit, then the folds, which are the validation rotation rather
+    # than a subdivision of the training set (see build_splits).
+    names = np.array(["test"] + [f"fold{i}" for i in range(n_folds)])
+    quotas = np.array([test_fraction] + [(1 - test_fraction) / n_folds] * n_folds)
+    filled = np.zeros(len(names))
+
+    assignment = {}
+    for _, block in groups.groupby("stratum"):
+        obs_ids = np.array(sorted(block.index))
+        rng.shuffle(obs_ids)
+        for obs_id in obs_ids.tolist():
+            k = int(np.argmin(filled / quotas))
+            assignment[obs_id] = names[k]
+            filled[k] += float(block.n_pairs[obs_id])
+    return assignment
+
+
 def build_splits(
     pairs: pd.DataFrame,
     output_path: Path,
     seed: int = SEED,
     test_fraction: float = TEST_FRACTION,
     n_folds: int = N_FOLDS,
+    stratify: bool = True,
 ) -> pd.DataFrame:
     """Group-wise split on obs_id: hold out `test_fraction` for test, K-fold the rest.
 
-    Folds are assigned round-robin over a shuffled obs_id list, giving roughly
-    equal obs_id counts per fold (sample counts within a fold scale with the
-    variable spectra-per-obs distribution, which is acceptable here).
+    The file this writes carries `n_folds` + 1 labels, and the folds are a *validation
+    rotation*, not a subdivision of an already-defined training set: the training set is
+    what the rotation leaves over. The delivered model validates on `fold0` and trains on
+    `fold1`..`fold4`; the cross-validation of the campaign retrains the same configuration
+    `n_folds` times, each time validating on a different fold, and every one of those runs
+    reports on the same `test` split, which is drawn once and never rotated.
+
+    Whole observations move together, which is the constraint that stops the spatial
+    leak: two MASCS spots a few kilometres apart on the same track are nearly the same
+    measurement, so splitting them across train and test would score memorisation. The
+    draw is stratified *inside* that constraint, never against it: obs_id remains the
+    unit that is drawn, and the strata only decide which observations compete with which.
+
+    Strata are the group-level |latitude| band (0-30-60-90 deg) x image-count tercile x
+    incidence half, the three covariates that shift with a random draw and along which
+    accuracy varies (median spectral angle 2.87 deg below 30 deg of latitude against
+    3.74 deg beyond 60 deg; 3.35 deg where fewer than ten image sets are stacked against
+    2.9 deg above). Terrain class is not stratified: it is what a track shares along its
+    whole length, so it is largely carried by the latitude and geometry bands already.
+
+    Measured on this dataset, three stratified draws against three unstratified ones,
+    each trained end to end:
+
+      - covariate balance: worst |standardised mean difference| over absolute latitude,
+        image count, the three angles, reflectance level and colour drops from a median
+        of 0.117 over 500 unstratified draws (0.126 for the delivered one) to a median
+        0.06 over 10 stratified draws;
+      - fold sizes: the spread between the largest and the smallest fold falls from
+        ~3 000 pairs to ~25, so cross-validation folds finally weigh the same;
+      - representativity: reweighting the test set to the training population moves the
+        test MSE by -0.27 +/- 0.32 % against +0.22 +/- 2.01 %, i.e. the estimate stops
+        depending on the luck of the draw;
+      - accuracy is unchanged: MSE / k-NN floor 1.568 +/- 0.027 against 1.556 +/- 0.007,
+        median spectral angle 3.020 +/- 0.014 deg against 3.102 +/- 0.043 deg, mean CCC
+        0.537 +/- 0.013 against 0.535 +/- 0.044. Stratification buys stability across
+        draws rather than a better model.
+
+    `stratify=False` restores the historical round-robin deal bit for bit: the delivered
+    `splits.parquet`, and therefore the delivered checkpoint, was drawn that way.
     """
     rng = np.random.default_rng(seed)
-    obs_ids = np.array(sorted(pairs.obs_id.unique()))
-    rng.shuffle(obs_ids)
-
-    n_test = int(round(len(obs_ids) * test_fraction))
-    test_obs = set(obs_ids[:n_test].tolist())
-    cv_obs = obs_ids[n_test:]
-    obs_to_fold = {o: i % n_folds for i, o in enumerate(cv_obs.tolist())}
+    draw = _stratified_draw if stratify else _plain_draw
+    assignment = draw(pairs, rng, test_fraction, n_folds)
 
     splits = pd.DataFrame(
         {"ref_id": pairs.ref_id.values, "obs_id": pairs.obs_id.values}
     )
-    splits["split"] = [
-        "test" if o in test_obs else f"fold{obs_to_fold[o]}"
-        for o in splits.obs_id.values
-    ]
+    splits["split"] = [assignment[o] for o in splits.obs_id.values]
 
     counts = splits.groupby("split").agg(
         n_pairs=("ref_id", "size"),
         n_obs_id=("obs_id", "nunique"),
     )
-    logger.info("splits:\n%s", counts.to_string())
+    logger.info("splits (%s):\n%s", "stratified" if stratify else "plain", counts.to_string())
+    train = [f"fold{i}" for i in range(1, n_folds) if f"fold{i}" in counts.index]
+    logger.info(
+        "delivered use: fold0 = validation, %s = training (%d pairs), test = final audit only",
+        " + ".join(train), int(counts.loc[train, "n_pairs"].sum()),
+    )
 
     splits[["ref_id", "split"]].to_parquet(
         output_path, engine="pyarrow", compression="zstd"
@@ -421,6 +594,11 @@ def main():
         help="skip colocation; recompute splits from an existing pairs.parquet",
     )
     parser.add_argument(
+        "--no-stratify",
+        action="store_true",
+        help="draw the splits without strata (reproduces the delivered splits.parquet)",
+    )
+    parser.add_argument(
         "--limit",
         type=int,
         default=None,
@@ -438,7 +616,7 @@ def main():
         if not PAIRS_PATH.exists():
             raise FileNotFoundError(PAIRS_PATH)
         pairs = pd.read_parquet(PAIRS_PATH)
-        build_splits(pairs, SPLITS_PATH)
+        build_splits(pairs, SPLITS_PATH, stratify=not args.no_stratify)
         return
 
     missing = [p for p in (QUALITY_PATH, GEOMETRY_PATH, SHAPES_PATH,
@@ -463,7 +641,7 @@ def main():
     base = load_base(clean["ref_id"])
     written = process_chunks(base, chunksize=args.chunksize, force=args.force)
     pairs = consolidate(written, PAIRS_PATH)
-    build_splits(pairs, SPLITS_PATH)
+    build_splits(pairs, SPLITS_PATH, stratify=not args.no_stratify)
 
 
 if __name__ == "__main__":

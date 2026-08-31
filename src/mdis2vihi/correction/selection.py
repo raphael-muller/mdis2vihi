@@ -32,8 +32,9 @@ from rasterio import features
 from shapely import affinity, box
 from shapely.geometry import Polygon
 
+from ..data.io import mosaic_projector
+
 R_MERC_KM = 2439.4
-R_MERC_M = 2_439_400.0
 
 REPO = Path(__file__).resolve().parents[3]
 THOMAS_CSV = REPO / "data/raw/hollow/1-s2.0-S0019103516302469-mmc4.txt"
@@ -174,17 +175,23 @@ def split_seam(poly):
     return out
 
 
-def to_projected(poly):
-    """Lon/lat polygon -> projected coordinates (Equirectangular Mercury, metres).
+def to_projected(poly, tf=None):
+    """Lon/lat polygon -> the projected coordinates of the reference grid, in metres.
+
+    PROJ does the transformation (`tf`, or a transformer built from the MDIS mosaic's
+    own CRS), so the grid's own projection parameters are used rather than a formula
+    written out here.
 
     INTERIOR rings are preserved: dilating a crescent-shaped HORNET polygon by 1 km can
     close it into a ring, and filling that hole would switch on pixels the analytic selection
     leaves off (up to ~4 km from the edge, measured).
     """
+    tf = tf if tf is not None else mosaic_projector()
+
     def ring(c):
         xy = np.asarray(c.coords, float)
-        return np.column_stack([np.radians(xy[:, 0]) * R_MERC_M,
-                                np.radians(xy[:, 1]) * R_MERC_M])
+        x, y = tf.transform(xy[:, 0], xy[:, 1])
+        return np.column_stack([x, y])
     return Polygon(ring(poly.exterior), [ring(r) for r in poly.interiors])
 
 
@@ -227,16 +234,19 @@ def grid_from(path):
         return ds.transform, ds.crs, ds.width, ds.height
 
 
-def rasterize_spatial(polys_lonlat, transform, width, height):
+def rasterize_spatial(polys_lonlat, transform, width, height, crs=None):
     """Spatial stage -> uint8 mask (1 = pixel centre inside a catalogue object).
 
-    `all_touched=False`: the test is on the pixel CENTRE, as the point-in-polygon
-    selection it replaces tested one footprint centre at a time.
+    `crs` is the CRS of the grid `transform` belongs to, as returned by `grid_from`;
+    the polygons are projected into it. `all_touched=False`: the test is on the pixel
+    CENTRE, as the point-in-polygon selection it replaces tested one footprint centre
+    at a time.
     """
+    tf = mosaic_projector(crs)
     shapes = []
     for p in polys_lonlat:
         for q in split_seam(p):
-            shapes.append((to_projected(q), 1))
+            shapes.append((to_projected(q, tf), 1))
     if not shapes:
         raise ValueError("no polygon to rasterise")
     return features.rasterize(shapes, out_shape=(height, width), transform=transform,

@@ -9,8 +9,8 @@ rather than taken on trust.
 
 The **base model** is the delivered model. It is never retrained here, so wherever the
 correction strength is zero the output is the deliverable itself, by construction. `B`
-holds the first `rank` spectral shapes of `target - base_model` measured on the simulated
-pairs, and does not change during training; only the small network `c`, which sets how
+holds the first `rank` spectral shapes of `target - base_model` measured on the hollow
+pairs of step 7, and does not change during training; only the small network `c`, which sets how
 much of each shape to add, is learned. Restricting the correction to a couple of fixed
 shapes is what stopped it from spending 231 degrees of freedom on artefacts that varied
 from one random seed to the next.
@@ -20,8 +20,8 @@ Inf. Fusion, eq. 4) applied to the residual rather than to the spectrum; restric
 multivariate response to a fixed low-rank subspace is reduced-rank regression (Anderson
 1951; Izenman 1975).
 
-The strength is supplied as a **label** during training (1 on simulated hollow pairs, 0
-on real ones) and read from a spatial catalogue at inference. Nothing decides it from the
+The strength is supplied as a **label** during training (1 on the hollow pairs, 0 on the
+background ones) and read from a spatial catalogue at inference. Nothing decides it from the
 spectrum: a hollow and a facula are not separable in 8 MDIS bands.
 
 Checkpoints written through `CorrectionTrainingModule` load back with
@@ -58,10 +58,12 @@ def correction_basis(base_model, x9: np.ndarray, y: np.ndarray, rank: int = 2):
     deliberately **not** centred: the mean correction is itself part of the shape to
     reproduce, so removing it would throw away most of mode 1.
 
-    Rank 2 is the default because the singular values give 94.6 % of the residual
-    variance to mode 1, 2.1 % to mode 2 and only 0.7 % to mode 3. The decomposition runs
-    on the rows finite at every band (2 091 of 3 627, recorded in `report`); that
-    selection shifts mode 2 by ~9 degrees and leaves mode 1 untouched.
+    Rank 2 is the default because the singular values give 91.2 % of the residual
+    variance to mode 1, 4.1 % to mode 2 and only 0.5 % to mode 3. The decomposition runs
+    on the rows finite at every band (1 827 of 3 627, recorded in `report`): the far NIR
+    tail of a VIRS spectrum carries gaps, and a row with one missing band cannot enter an
+    SVD. Rank 2 therefore holds 95.4 % of the variance of what the correction has to
+    reproduce, and the third mode is at the level of the noise.
     """
     with torch.no_grad():
         a = base_model(torch.from_numpy(np.ascontiguousarray(x9, np.float32))).numpy().astype(np.float64)

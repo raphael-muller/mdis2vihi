@@ -37,11 +37,15 @@ for _s in (sys.stdout, sys.stderr):
     if hasattr(_s, "reconfigure"):
         _s.reconfigure(errors="replace")
 
-from mdis2vihi.data.io import MASCS_DIR, MDIS_MOSAIC_PATH  # noqa: E402
+from mdis2vihi.data.io import (  # noqa: E402
+    MASCS_DIR,
+    MDIS_MOSAIC_PATH,
+    lonlat_to_xy,
+    mosaic_projector,
+)
 from mdis2vihi.eval.params import GRID  # noqa: E402
 
 OUT = REPO / "runs/final/eval/hollows/footprints/crater_footprint_spectra.parquet"
-R_MERC = 2_439_400.0
 MPP_KM = 0.66524315270546
 
 # (name, latitude, east longitude, diameter km). The first four are the craters
@@ -53,16 +57,18 @@ CRATERS = [("Dominici", 1.35, 323.40, 20), ("Hopper", -12.44, 304.04, 36),
 CTX = 1.6            # window half-width, in crater radii
 
 
-def lon_to_x(lon):
+def to_180(lon):
+    """East longitude as the catalogues store it (0-360) -> the mosaic's [-180, 180)."""
     lon = np.asarray(lon, float)
-    return np.radians(np.where(lon > 180.0, lon - 360.0, lon)) * R_MERC
+    return np.where(lon > 180.0, lon - 360.0, lon)
 
 
 def crater_footprints(ds, name, lat, lon, diam_km, gx, gy, bright_pct, blue_pct):
     """Footprints of one crater, with the on-hollow flag from the MDIS colour proxy."""
     tr = ds.transform
     half = max(20, int(CTX * diam_km / 2 / MPP_KM))
-    rc, cc = rio_rowcol(tr, float(lon_to_x(lon)), np.radians(lat) * R_MERC)
+    cx, cy = lonlat_to_xy(to_180(lon), lat, mosaic_projector(ds.crs))
+    rc, cc = rio_rowcol(tr, float(cx), float(cy))
     b = ds.read(indexes=list(range(1, 9)),
                 window=Window(cc - half, rc - half, 2 * half, 2 * half)).astype(np.float64)
     valid = np.all(np.isfinite(b) & (b > -1e30), axis=0)
@@ -112,8 +118,8 @@ def main():
     good = geo.merge(qual, on="ref_id", how="left")
     kept = set(pd.read_parquet(pairs, columns=["ref_id"]).ref_id)
     good["in_pairs"] = good.ref_id.isin(kept)
-    gx = lon_to_x(good.lon_center.to_numpy())
-    gy = np.radians(good.lat_center.to_numpy()) * R_MERC
+    gx, gy = lonlat_to_xy(to_180(good.lon_center.to_numpy()),
+                          good.lat_center.to_numpy())
 
     rows = []
     with rasterio.open(MDIS_MOSAIC_PATH) as ds:

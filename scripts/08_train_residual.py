@@ -7,16 +7,31 @@ spatial selection to make the layer.
 
 The base model is the delivered one and is never retrained, so the background is untouched
 by construction. `B` holds the first `--rank` spectral shapes of `target - base model` over
-the simulated pairs and is fixed; only the small network `c` is learned.
+the hollow pairs of step 7 and is fixed; only the small network `c` is learned.
+
+Which base model, and why that one. `BASE_MODEL_CKPT` below is the checkpoint written by
+`scripts/03_train_final.py`, the single global network the whole 231-band mosaic is
+generated from: it is the model for every spectrum, not a hollow-specific one. Nothing here
+retrains it. `load_base_model` sets `requires_grad = False` on all of its parameters and
+puts it in eval mode, so the gradient reaches only `c`, and the layer is defined as a
+correction *of that exact file*. Pointing this at another checkpoint would make the
+resulting layer inconsistent with the mosaic it is added to, since `output = anchor + g *
+[c(x) @ B.T]` only holds for the anchor the residual was fitted against.
+
+The tables read here are the cached ones: pairs, splits, target and the step-7 hollow pairs
+are all parquet with fixed-length arrays on the implicit 5 nm grid. The 30 GB `spectres-002.dat`
+and its per-row wavelength lists are read only by steps 1, 2 and 6, once each.
 
 Two points that matter for the result:
 
-* the strength is a **label** (1 on simulated pairs, 0 on real ones), never learned from
+* the strength is a **label** (1 on the hollow pairs, 0 on the background ones), never learned from
   the spectrum, because a hollow and a facula are not separable in 8 MDIS bands. At
   inference it comes from a spatial catalogue;
-* **validation runs on simulated pairs kept aside by footprint**, at full strength. Step 7
+* **validation runs on hollow pairs kept aside by footprint**, at full strength. Step 7
   emits three rows per footprint, so a row-wise split leaves the same footprint on both
-  sides; validating on the background instead leaves `val/loss` almost flat.
+  sides; validating on the background instead leaves `val/loss` almost flat. Those pairs
+  carry the measured MDIS vector, so `val/loss` is read in the same input space inference
+  runs in, and a held-out footprint is a footprint whose pixel the residual has never seen.
 
 Writes, under `--out`: the checkpoint, `residual_basis_rank<k>.npz`, `residual_stats.json`
 and the training metrics.
@@ -40,6 +55,7 @@ os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")   # CUDA determinism
 import lightning as L
 import numpy as np
 import pandas as pd
+import pyarrow.parquet as pq
 import torch
 from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
 from torch.utils.data import DataLoader, TensorDataset, WeightedRandomSampler
@@ -55,6 +71,8 @@ from mdis2vihi.correction.residual import (ModelPlusCorrection, LowRankCorrectio
                                          CorrectionTrainingModule, load_base_model,
                                          correction_basis)
 
+# The delivered checkpoint of scripts/03_train_final.py (best epoch 93), frozen. Not a
+# hollow-specific model: it is the one the whole mosaic is predicted from.
 BASE_MODEL_CKPT = REPO / "runs/final/lightning_logs/version_0/checkpoints/epoch=93-step=10340.ckpt"
 BASE_MODEL_STATS = REPO / "runs/final/image_count_stats.json"
 SIMPAIRS = REPO / "data/processed/simpairs_S2.parquet"
@@ -72,16 +90,45 @@ def to9(x8, count, mean, std):
     return np.concatenate([x8, (e - mean) / std], axis=1).astype(np.float32)
 
 
+COUNT_COL = "mdis_image_count"
+COUNT_COL_LEGACY = "mdis_emission"
+
+
+def pairs_count_column(path: Path = PAIRS) -> str:
+    """Name of the band-9 column in `pairs.parquet`.
+
+    It was renamed `mdis_emission` -> `mdis_image_count` on 2026-08-21, when band 9 was
+    identified as the count of 8-colour image sets and not an emission angle. Only the name
+    changed, so a table built before that date holds the same numbers and is read here
+    under either name; `scripts/01_build_pairs.py` only ever writes the current one.
+    """
+    names = set(pq.ParquetFile(path).schema_arrow.names)
+    for c in (COUNT_COL, COUNT_COL_LEGACY):
+        if c in names:
+            return c
+    raise SystemExit(f"{path} carries neither {COUNT_COL} nor {COUNT_COL_LEGACY}: "
+                     "rebuild it with scripts/01_build_pairs.py.")
+
+
+def count_column_of(df: pd.DataFrame) -> str:
+    """Same resolution as `pairs_count_column`, on a table already in memory."""
+    for c in (COUNT_COL, COUNT_COL_LEGACY):
+        if c in df.columns:
+            return c
+    raise SystemExit(f"no {COUNT_COL} column: rebuild with scripts/07_build_simpairs.py.")
+
+
 def load_real(val_fold, mean, std):
     """Real training pairs: the background the residual must leave alone."""
-    pairs = pd.read_parquet(PAIRS, columns=["ref_id", "mdis_iof", "mdis_image_count"])
+    ccol = pairs_count_column()
+    pairs = pd.read_parquet(PAIRS, columns=["ref_id", "mdis_iof", ccol])
     lsf = pd.read_parquet(TARGET, columns=["ref_id", TARGET_COL])
     splits = pd.read_parquet(SPLITS)
     df = pairs.merge(lsf, on="ref_id").merge(splits, on="ref_id")
     df = df[~df.split.isin([val_fold, "test"])]
     x8 = np.stack(df.mdis_iof.to_list()).astype(np.float32)
     y = np.stack(df[TARGET_COL].to_list()).astype(np.float32)
-    return to9(x8, df.mdis_image_count.to_numpy(), mean, std), y
+    return to9(x8, df[ccol].to_numpy(), mean, std), y
 
 
 def main():
@@ -92,22 +139,29 @@ def main():
     ap.add_argument("--rank", type=int, default=2)
     ap.add_argument("--coef-hidden", default="32")
     ap.add_argument("--syn-frac", type=float, default=0.30,
-                    help="share of the sampled batch mass taken by simulated pairs")
+                    help="share of the sampled batch mass taken by the hollow pairs")
     ap.add_argument("--syn-val-frac", type=float, default=0.15,
-                    help="share of the simulated pairs held out for validation")
+                    help="share of the hollow footprints held out for validation")
     ap.add_argument("--val-fold", default="fold0")
     ap.add_argument("--max-epochs", type=int, default=MAX_EPOCHS)
     ap.add_argument("--validate", metavar="CKPT",
-                    help="reference residual checkpoint to compare the result against")
+                    help="reference RESIDUAL checkpoint this run is reproduced against, "
+                         "normally the delivered one, "
+                         "runs/final/correction/residual_rank2.ckpt. It is not the base "
+                         "model and not a held-out score: the comparison is a "
+                         "reproducibility check on the residual (basis alignment and "
+                         "correlation of the correction over the hollow pairs). The "
+                         "held-out score of this run is val/loss, on the hollow "
+                         "footprints kept aside by --syn-val-frac.")
     args = ap.parse_args()
 
     coef_hidden = tuple(int(v) for v in args.coef_hidden.split(",") if v)
-    out = Path(args.out)
+    out = Path(args.out).resolve()   # absolute: residual_stats.json stores repo-relative paths
     out.mkdir(parents=True, exist_ok=True)
     L.seed_everything(args.seed, workers=True)
 
     stats = json.loads(BASE_MODEL_STATS.read_text(encoding="utf-8"))
-    emean, estd = float(stats["image_count_mean"]), float(stats["image_count_std"])
+    cmean, cstd = float(stats["image_count_mean"]), float(stats["image_count_std"])
     base_model = load_base_model(BASE_MODEL_CKPT)
 
     sim = pd.read_parquet(args.simpairs)
@@ -116,10 +170,10 @@ def main():
             f"{args.simpairs} carries no ref_id, so train and validation cannot be "
             "separated by footprint, rebuild it with scripts/07_build_simpairs.py.")
     x_sim = to9(np.stack(sim.mdis_iof.to_list()).astype(np.float32),
-                sim.mdis_image_count.to_numpy(), emean, estd)
+                sim[count_column_of(sim)].to_numpy(), cmean, cstd)
     y_sim = np.stack(sim[TARGET_COL].to_list()).astype(np.float32)
     sim_ref = sim.ref_id.to_numpy()
-    print(f"simulated pairs: {len(x_sim)} from {len(np.unique(sim_ref))} footprints",
+    print(f"hollow pairs: {len(x_sim)} from {len(np.unique(sim_ref))} footprints",
           flush=True)
 
     basis, report = correction_basis(base_model, x_sim, y_sim, rank=args.rank)
@@ -128,7 +182,7 @@ def main():
           f"{report['cumulative_at_rank']*100:.1f} %", flush=True)
     np.savez(out / f"residual_basis_rank{args.rank}.npz", B=basis, wavelength_nm=GRID)
 
-    x_real, y_real = load_real(args.val_fold, emean, estd)
+    x_real, y_real = load_real(args.val_fold, cmean, cstd)
     print(f"real training pairs: {len(x_real):,}", flush=True)
 
     rng = np.random.default_rng(args.seed)
@@ -148,8 +202,8 @@ def main():
     w_syn = ((args.syn_frac * len(x_real)) / ((1.0 - args.syn_frac) * len(t_idx))
              if len(t_idx) else 1.0)
     weights = np.where(strength > 0.5, w_syn, 1.0).astype(np.float64)
-    print(f"train {len(strength):,} (real {len(x_real):,} + simulated {len(t_idx):,}), "
-          f"simulated weight {w_syn:.2f} | validation {len(v_idx)} simulated pairs",
+    print(f"train {len(strength):,} (background {len(x_real):,} + hollow {len(t_idx):,}), "
+          f"hollow weight {w_syn:.2f} | validation {len(v_idx)} hollow pairs",
           flush=True)
 
     train_dl = DataLoader(
@@ -178,22 +232,35 @@ def main():
     best = Path(ckpt_cb.best_model_path).resolve()
     print(f"best checkpoint: {best}  ({(time.time()-t0)/60:.1f} min)", flush=True)
 
+    # Copy the best epoch to a stable name at the root of --out. Lightning names the file
+    # after the epoch it happened to stop on, while the layer builder needs one path that
+    # does not move between runs; `residual_stats.json` points here, not into lightning_logs.
+    promoted = out / f"residual_rank{args.rank}.ckpt"
+    promoted.write_bytes(best.read_bytes())
+    print(f"promoted to: {promoted}", flush=True)
+
     (out / "residual_stats.json").write_text(json.dumps({
         "_comment": "Rank-constrained residual of the hollow-correction layer, "
                     "trained by scripts/08_train_residual.py. Read by "
                     "scripts/tools/build_hollow_correction.py.",
-        "image_count_mean": emean, "image_count_std": estd,
-        "best_ckpt": best.relative_to(REPO).as_posix(),
+        "image_count_mean": cmean, "image_count_std": cstd,
+        "best_ckpt": promoted.relative_to(REPO).as_posix(),
+        "best_epoch_ckpt": best.relative_to(REPO).as_posix(),
         "seed": args.seed, "rank": args.rank, "coef_hidden": list(coef_hidden),
         "res_hidden": [128, 128], "learn_basis": False, "val_fold": args.val_fold,
         "syn_frac": args.syn_frac, "syn_val_frac": args.syn_val_frac,
         "simpairs": str(Path(args.simpairs).name),
         "base_model_ckpt": BASE_MODEL_CKPT.relative_to(REPO).as_posix(),
         "basis_report": report,
-        "arch": "low-rank residual, spatial catalogue selection at inference",
+        "arch": "low-rank residual on measured MDIS inputs, spatial catalogue selection at inference",
     }, indent=2), encoding="utf-8")
 
     if args.validate:
+        # `args.validate` is the reference RESIDUAL checkpoint, i.e. the delivered
+        # runs/final/correction/residual_rank2.ckpt, not the base model of BASE_MODEL_CKPT.
+        # This block answers "does this run reproduce the delivered residual", which is a
+        # reproducibility check; the quality of the run is val/loss, measured above on the
+        # hollow footprints held out by footprint.
         from mdis2vihi.correction.layer import CorrectionNetwork
         ref = CorrectionNetwork.from_checkpoint(args.validate)
         new = CorrectionNetwork.from_checkpoint(best)

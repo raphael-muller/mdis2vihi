@@ -98,7 +98,7 @@ catalogued hollows and leaves every other pixel bit-identical:
 
 ```
 output = model output + g(lon, lat, reflectance) * [ c(x) @ B.T ]
-g      = 0.42 * [ (Thomas 2016 union HORNET 0.8) inter bright+blue ]
+g      = 0.80 * [ (Thomas 2016 union HORNET 0.8) inter bright+blue ]
 ```
 
 The layer itself is small enough to live in this repository
@@ -108,13 +108,21 @@ steps 1-5 and the layer in steps 6-10: the selection is rebuilt from the two hol
 catalogues and must select the same 115 112 pixels, while the rank-2 residual is
 carried here as a 644 kB checkpoint, the way the model checkpoint is.
 
+**Both sides of the pairs the residual is trained on are measured**: the input is the MDIS
+vector colocated under a hollow footprint, the target that footprint's VIRS spectrum. The
+residual therefore reads, at training, the same input space it is applied to over the
+mosaic. Scored on footprints held out of its training set, with the mosaic's own vector, it
+improves the prediction by 44 % of MSE and 0.27 deg of spectral angle (3 seeds out of 3),
+and if it were wrongly switched on over background it would move that background by 2.7 %.
+
 **The strength is calibrated, and its generalisation measured.**
-`scripts/tools/calibrate_hollow_scale.py` derives `0.42` from the four craters whose
+`scripts/tools/calibrate_hollow_scale.py` derives `0.797` from the four craters whose
 footprints are kept out of the residual's training set, then leaves each of them out in
 turn. Calibrated on three and applied to the fourth, the remaining hollow/background
-contrast error at 996 nm is **0.063 in the median and 0.139 at worst, against 0.175 and
-0.283 with no correction**: the layer removes about two thirds of the deficit on a
-crater it has never seen. Per-crater numbers in `correction/scale_calibration.json`.
+contrast error at 996 nm is **0.041 in the median and 0.162 at worst, against 0.175 and
+0.283 with no correction**: the layer removes about three quarters of the deficit in the
+median on a crater it has never seen. Per-crater numbers in
+`correction/scale_calibration.json`.
 
 How the correction reads spectrally is measured on the rasters, not asserted here: the
 last two sections of
@@ -131,8 +139,9 @@ descriptions, nodata, compression. The two differ only inside the selection.
 ## Known limitations
 
 Read these before drawing conclusions. Every figure comes from `runs/final/eval/`, on the
-test split never used in training (15 047 spectra over 562 observations, grouped by
-`obs_id`).
+held-out test split: the 10 % of observations set aside before training and used neither
+for fitting nor for model selection (15 047 spectra over 562 observations, split by
+`obs_id`, not by spectrum).
 
 **The error has a lower bound and the model sits near it, not at zero.** A 665 m MDIS
 pixel maps to a MASCS footprint of 1 to 5 km, so footprints with near-identical 8-band

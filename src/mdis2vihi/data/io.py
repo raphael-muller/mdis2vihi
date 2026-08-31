@@ -13,12 +13,15 @@ from __future__ import annotations
 
 import ast
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Iterable
 
 import numpy as np
 import pandas as pd
+import pyproj
 import rasterio
+from pyproj import Transformer
 from rasterio.windows import Window
 
 
@@ -87,6 +90,46 @@ def read_mdis_window(
     with rasterio.open(path) as src:
         indexes = list(bands) if bands is not None else list(range(1, src.count + 1))
         return src.read(indexes=indexes, window=window)
+
+
+# ------------------------------------------------------------------ projection
+
+
+@lru_cache(maxsize=4)
+def _crs_wkt_of(path: str) -> str:
+    with rasterio.open(path) as src:
+        return src.crs.to_wkt()
+
+
+@lru_cache(maxsize=8)
+def _transformer(crs_wkt: str) -> Transformer:
+    crs = pyproj.CRS.from_wkt(crs_wkt)
+    return Transformer.from_crs(crs.geodetic_crs, crs, always_xy=True)
+
+
+def mosaic_projector(crs=None, path: str | Path = MDIS_MOSAIC_PATH) -> Transformer:
+    """(lon°, lat°) -> projected metres, for `crs` or for the CRS `path` declares.
+
+    PROJ does the transformation, and reads the sphere and the projection parameters
+    from the raster itself, so a product delivered on another grid is projected onto
+    that grid instead of silently landing on the wrong pixels. Pass the CRS of an
+    already-open dataset when there is one. Cached: one transformer per CRS.
+    """
+    if crs is None:
+        return _transformer(_crs_wkt_of(str(path)))
+    return _transformer(crs.to_wkt() if hasattr(crs, "to_wkt") else str(crs))
+
+
+def lonlat_to_xy(lon, lat, tf: Transformer | None = None):
+    """Degrees (lon, lat) -> metres (x, y) of the mosaic CRS, arrays or scalars.
+
+    Longitudes are taken as the caller passes them: the [0°, 360°) convention of some
+    MASCS files has to be folded onto [-180°, 180°) first, that is a file convention
+    and not part of the projection.
+    """
+    tf = tf if tf is not None else mosaic_projector()
+    x, y = tf.transform(np.asarray(lon, dtype=float), np.asarray(lat, dtype=float))
+    return np.asarray(x), np.asarray(y)
 
 
 # ----------------------------------------------------------------- MASCS/VIRS

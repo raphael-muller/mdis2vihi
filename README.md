@@ -49,8 +49,9 @@ transformed and z-standardised. Target: the
 co-located MASCS/VIRS spectrum resampled with the instrument's line-spread
 function. Loss: NaN-tolerant MSE.
 
-Test split, never used in training (15 047 spectra over 562 observations,
-grouped by `obs_id`):
+Held-out test split: 10 % of the observations, set aside before training and used
+neither for fitting nor for model selection (15 047 spectra over 562 observations,
+split by `obs_id`, not by spectrum):
 
 | MSE | RMSE | Spectral angle, median | p95 | k-NN lower bound (k = 5) | MSE / bound |
 |---|---|---|---|---|---|

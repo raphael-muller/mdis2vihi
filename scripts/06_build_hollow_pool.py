@@ -2,7 +2,7 @@
 
 `q1` compares the visible and near-infrared slopes, and a hollow spectrum fails it by
 construction, so the model never sees the unit it is later asked to render. This step
-selects those footprints on purpose, for step 7 to simulate training pairs from.
+selects those footprints on purpose, for step 7 to build training pairs from.
 
 Selection rule: a MASCS footprint whose centre lies within `--radius-km` of a Thomas et al.
 (2014) hollow-group centre (nearest group wins); groups within a kept-aside crater radius
@@ -47,7 +47,12 @@ for _s in (sys.stdout, sys.stderr):
     if hasattr(_s, "reconfigure"):
         _s.reconfigure(errors="replace")
 
-from mdis2vihi.data.io import MDIS_MOSAIC_PATH, MASCS_DIR  # noqa: E402
+from mdis2vihi.data.io import (  # noqa: E402
+    MASCS_DIR,
+    MDIS_MOSAIC_PATH,
+    lonlat_to_xy,
+    mosaic_projector,
+)
 
 # Step 1 is a script, not a module: load it by path so the colocation used here is
 # literally the one that built the training pairs, not a copy that could drift.
@@ -66,7 +71,6 @@ SHAPES = MASCS_DIR / "Spectra_0_360_-90_90_shapes.dat"
 OUT_DEFAULT = REPO / "data/processed/hollow_pool.parquet"
 
 R_KM = 2439.4                      # Mercury radius used by the catalogue arithmetic
-R_M = 2_439_400.0                  # sphere of the MDIS mosaic CRS
 MPP_KM = 0.66524315270546
 NODATA = -1e30
 VIS_BANDS = slice(2, 5)            # 559, 629, 749 nm, as in step 1
@@ -123,7 +127,13 @@ def drop_held_out_groups(cat):
 
 
 def candidates(cat, geom, radius_km):
-    """Footprint centres within `radius_km` of a group centre, nearest group wins."""
+    """Footprint centres within `radius_km` of a group centre, nearest group wins.
+
+    The loop runs over the ~440 catalogue groups, not over the footprints, and each pass
+    is already vectorised over the 3.17 M rows of `geometry.dat`. Removing it means the
+    full 440 x 3.17 M distance matrix, about 11 GB in float64 for a result that is 99.5 %
+    empty; the latitude band below discards most of those rows before any trigonometry.
+    """
     lat = geom.lat_center.to_numpy(float)
     lon180 = to_180(geom.lon_center.to_numpy(float))
     ref = geom.ref_id.to_numpy()
@@ -160,10 +170,11 @@ def bright_blue_hits(cand, cat, mosaic_path, radius_km):
     hits = np.zeros(len(cand), bool)
     with rasterio.open(mosaic_path) as src:
         T = src.transform
+        tf = mosaic_projector(src.crs)
         for gid, sub in cand.groupby("group_id"):
             glo = float(centres.loc[gid, "Central_long"])
             gla = float(centres.loc[gid, "Central_lat"])
-            gcol, grow = ~T * (np.radians(glo) * R_M, np.radians(gla) * R_M)
+            gcol, grow = ~T * lonlat_to_xy(glo, gla, tf)
             gcol, grow = int(np.floor(gcol)), int(np.floor(grow))
             c0, r0 = max(gcol - half, 0), max(grow - half, 0)
             w = min(2 * half + 1 - (c0 - (gcol - half)), src.width - c0)
@@ -181,8 +192,8 @@ def bright_blue_hits(cand, cat, mosaic_path, radius_km):
                 continue
             mask = (disk & (r749 >= np.nanpercentile(r749[disk], R749_PCT))
                          & (ci >= np.nanpercentile(ci[disk], CI_PCT)))
-            fx = np.radians(to_180(sub.lon_center.to_numpy(float))) * R_M
-            fy = np.radians(sub.lat_center.to_numpy(float)) * R_M
+            fx, fy = lonlat_to_xy(to_180(sub.lon_center.to_numpy(float)),
+                                  sub.lat_center.to_numpy(float), tf)
             fcol, frow = ~T * (fx, fy)
             cc = np.floor(fcol).astype(int) - c0
             rw = np.floor(frow).astype(int) - r0
@@ -194,7 +205,28 @@ def bright_blue_hits(cand, cat, mosaic_path, radius_km):
 
 
 def quality_rule(df):
-    """Strict filter of step 1 with `q1` inverted: this is the whole point of the pool."""
+    """Strict filter of step 1 with `q1` inverted: this is the whole point of the pool.
+
+    Why `q2`, `q3` and `q4` are kept while `q1` is inverted: only `q1` rejects hollows for
+    what they are. It compares the visible and near-infrared slopes, so it is a prior on
+    spectral shape and a hollow fails it by construction (median `q1` 1.99 over the pool).
+    The other three say nothing about the surface: `q2` is the residual of the fit joining
+    the two detector arrays, `q3` and `q4` are the fractions of VIS and NIR channels that
+    survived Barraud's cleaning. A footprint failing them is a bad *measurement*, and this
+    pool is the sole definition of the residual the correction layer will reproduce, so
+    letting one in would put detector noise into the spectral basis of step 8.
+
+    The bright+blue mask is not a substitute either: it is read on the MDIS mosaic, at
+    665 m and in 8 bands, so it locates a hollow field on the ground but sees nothing of
+    the quality of the VIRS spectrum that will serve as the target.
+
+    The price is modest: the rule as a whole keeps 11 039 of the 17 140 candidates, and
+    since the `q1` inversion rejects almost nothing here (the window it excludes is
+    essentially empty of hollows), that 36 % loss is what `q2..q4` cost. It buys a pool
+    whose spectra are on the same quality footing as the training set, with exactly one
+    criterion relaxed, which is what makes the residual of step 8 a hollow signature and
+    not a mixture of hollow signature and measurement noise.
+    """
     return ((df.q2.abs() < 5) & (df.q3 > 80) & (df.q4 > 95)
             & ~((df.q1 >= 0.9) & (df.q1 <= 1.1)))
 
@@ -204,17 +236,19 @@ def colocate(pool, mosaic_path, vis_floor):
     shapes = _step01.filtered_chunked_read(SHAPES, set(pool.ref_id.tolist()),
                                            usecols=["ref_id", "foot_geom"])
     pool = pool.merge(shapes, on="ref_id")
-    iof, sigma, emis, vis = [], [], [], []
+    iof, sigma, count, vis = [], [], [], []
     with rasterio.open(mosaic_path) as src:
+        tf = _step01.mosaic_projector(src.crs)
         for geom_wkt in pool.foot_geom.to_numpy():
-            poly = _step01.project_polygon(wkt.loads(geom_wkt))
+            poly = _step01.project_polygon(wkt.loads(geom_wkt), tf)
             vals = _step01.coloc_mean(src, poly, n_bands=17) if poly is not None else None
             if vals is None:
-                iof.append(None); sigma.append(None); emis.append(np.nan); vis.append(np.nan)
+                iof.append(None); sigma.append(None); count.append(np.nan); vis.append(np.nan)
                 continue
-            iof.append(vals[0:8]); emis.append(vals[8]); sigma.append(vals[9:17])
+            # 0-based: [0:8] I/F, [8] band 9 = image-set count, [9:17] their sigmas.
+            iof.append(vals[0:8]); count.append(vals[8]); sigma.append(vals[9:17])
             vis.append(float(np.nanmedian(vals[VIS_BANDS])))
-    pool = pool.assign(mdis_iof=iof, mdis_image_count=emis, mdis_sigma=sigma,
+    pool = pool.assign(mdis_iof=iof, mdis_image_count=count, mdis_sigma=sigma,
                        vis_median_iof=vis)
     ok = pool.mdis_iof.notna() & np.isfinite(pool.mdis_image_count)
     n_bad = int((~ok).sum())
@@ -227,11 +261,19 @@ def colocate(pool, mosaic_path, vis_floor):
 def spectral_target(pool, chunksize=200_000):
     """Native VIRS spectra of the pool, resampled onto the 5 nm grid two ways.
 
-    `naive_5nm` is the linear interpolation of step 1 (what the simulated-pair
-    synthesis consumes) and `lsf_5p0` the line-spread-aware resampling of step 2 (the
-    training target). Both come from the step-2 functions, not from a copy. The pool
-    fails `q1`, so these spectra are absent from `virs_lsf_target.parquet` and have to
-    be read again from the native file.
+    `lsf_5p0` is the line-spread-aware resampling of step 2, and is the training target
+    step 7 pairs with the colocated MDIS vector. `naive_5nm`, the linear interpolation of
+    step 1, is kept beside it as the comparison point between the two resamplings on this
+    pool. Both come from the step-2 functions, not from a copy.
+
+    The native file is not re-read on every run of the chain: step 2 already caches the
+    resampled spectra in `data/processed/virs_lsf_target.parquet`, one fixed-length array
+    per variant with the 5 nm grid implicit, so no wavelength axis is stored or parsed
+    again, and steps 3, 7 and 8 read only that. The pass below is the one exception, and
+    it is forced by the selection rather than by the format: the pool is made of the
+    footprints that *fail* `q1`, so its spectra were never written to that cache and exist
+    only in `spectres-002.dat`. It runs once, its result is cached in the pool parquet on
+    the same terms, and `--no-target` skips it.
     """
     import ast
     want = set(pool.ref_id.tolist())

@@ -1,8 +1,9 @@
 {
-  "_comment": "Trained correction network of the hollow correction layer. Kept next to the layer so that scripts/tools/build_hollow_correction.py works from a bare checkout; scripts/08_train_residual.py regenerates it from the input data. Train/validation are separated by footprint, not by row.",
+  "_comment": "Trained correction network of the hollow correction layer. Kept next to the layer so that scripts/tools/build_hollow_correction.py works from a bare checkout; scripts/08_train_residual.py regenerates it from the input data. Inputs are the measured MDIS vectors of the step-6 pool; train and validation are separated by footprint.",
   "image_count_mean": 21.470380783081055,
   "image_count_std": 17.301841735839844,
   "best_ckpt": "runs/final/correction/residual_rank2.ckpt",
+  "best_epoch_ckpt": "runs/residual/lightning_logs/version_1/checkpoints/epoch=98-step=11187.ckpt",
   "seed": 42,
   "rank": 2,
   "coef_hidden": [
@@ -20,16 +21,16 @@
   "base_model_ckpt": "runs/final/lightning_logs/version_0/checkpoints/epoch=93-step=10340.ckpt",
   "basis_report": {
     "n_rows_total": 3627,
-    "n_rows_used": 2091,
+    "n_rows_used": 1827,
     "explained_variance_ratio": [
-      0.9455804706682968,
-      0.021485891219867763,
-      0.007138402672360514,
-      0.0021234157021858616,
-      0.0013893579052213195
+      0.912325706721694,
+      0.041313256092883,
+      0.004524035265096331,
+      0.0031208571242398687,
+      0.002642488936117948
     ],
-    "cumulative_at_rank": 0.9670663618881645,
-    "median_residual_norm": 0.10126425690039167
+    "cumulative_at_rank": 0.9536389628145769,
+    "median_residual_norm": 0.07124745623785657
   },
-  "arch": "low-rank residual, spatial catalogue selection at inference"
+  "arch": "low-rank residual on measured MDIS inputs, spatial catalogue selection at inference"
 }

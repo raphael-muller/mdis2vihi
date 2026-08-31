@@ -14,7 +14,7 @@ If you only want to *use* the mosaic, you do not need any of this, see
 
 | # | Script | What it does | Disk written |
 |---|--------|--------------|-------|
-| 1 | `scripts/01_build_pairs.py` | Colocate MASCS/VIRS spectra with the MDIS mosaic; quality filter; group split | ~0.6 GB + ~2 GB intermediates |
+| 1 | `scripts/01_build_pairs.py` | Colocate MASCS/VIRS spectra with the MDIS mosaic; quality filter; train / validation / test split by `obs_id` | ~0.6 GB + ~2 GB intermediates |
 | 2 | `scripts/02_build_lsf_target.py --build` | Rebuild the training target with VIRS line-spread-aware resampling | ~1 GB |
 | 3 | `scripts/03_train_final.py` | Train the delivered model (9 inputs, deterministic) | ~2 MB |
 | 4 | `scripts/04_predict_mosaic.py` | Pixel-by-pixel inference over the whole mosaic | **~245 GB** |
@@ -27,7 +27,7 @@ hollow-corrected mosaic, continues from the same data:
 | # | Script | What it does | Disk written |
 |---|--------|--------------|-------|
 | 6 | `scripts/06_build_hollow_pool.py` | Recover the hollow footprints the `q1` filter rejects, from the hollow catalogue | ~6 MB |
-| 7 | `scripts/07_build_simpairs.py` | Simulate training pairs from that pool | ~7 MB |
+| 7 | `scripts/07_build_simpairs.py` | Pair each pool footprint with its measured MDIS vector | ~7 MB |
 | 8 | `scripts/08_train_residual.py` | Train the rank-2 residual on those pairs | ~1 MB |
 | 8a | `scripts/tools/build_crater_footprints.py` | Build the calibration table from MASCS + MDIS | ~13 MB |
 | 8b | `scripts/tools/calibrate_hollow_scale.py` | Calibrate the correction strength, leave-one-out | small |
@@ -124,7 +124,51 @@ grouped on `obs_id`.
 after a crash skips the chunks already written.
 
 **Outputs**: `data/processed/pairs.parquet` (one row per pair, ~0.55 GB) and
-`data/processed/splits.parquet` (`ref_id → {fold0..fold4, test}`).
+`data/processed/splits.parquet`, which labels every `ref_id` `test` or `fold0`…`fold4`.
+
+**What those labels mean.** They are a three-way train / validation / test split, made
+once here and reused by every later step. Whole observations are split, not individual
+spectra: 10 % of the `obs_id` go to `test`, the remaining 90 % are dealt into five folds
+(a round-robin deal for the delivered file, a stratified fill in the current code, see
+below). Step 3 then trains on
+`fold1`…`fold4` (111 907 pairs), validates on `fold0` (26 260 pairs, used for early
+stopping and checkpoint selection) and touches `test` (15 047 pairs) only to report the
+final numbers. The five folds are stored as fold labels rather than a single
+`train`/`val` column so that the same file also supports 5-fold cross-validation, but
+the delivered model uses the one assignment above. Splitting by `obs_id` is what makes
+the test set meaningful: consecutive spectra of one observation overlap on the ground, so
+a split drawn spectrum by spectrum would put near-duplicates on both sides of the
+boundary and flatter the model.
+
+**The draw is stratified inside that grouping.** `obs_id` remains the unit that moves,
+which is what stops the leak; the strata only decide which observations compete with which.
+A group's stratum is its |latitude| band (0-30-60-90°) × image-count tercile × incidence
+half, the three covariates along which accuracy actually varies (median spectral angle
+2.87° below 30° of latitude against 3.74° beyond 60°; 3.35° where fewer than ten image sets
+are stacked against 2.9° above). Inside a stratum, groups are handed out to whichever split
+is furthest behind its quota counted in pairs, so the five folds hold the same number of
+spectra and not merely the same number of observations. Terrain class is not stratified: it
+is what a track shares along its length and is largely carried by the latitude and geometry
+bands already.
+
+Measured over three stratified draws against three unstratified ones, each trained end to
+end: the worst standardised mean difference between test and
+the rest falls from a median 0.117 over 500 unstratified draws to a median 0.06 over 10
+stratified ones; the spread between the largest and the smallest fold falls from ~3 000
+pairs to ~25; reweighting the test set to the training population moves the test MSE by
+−0.27 ± 0.32 % against +0.22 ± 2.01 %. Accuracy is unchanged (MSE / k-NN floor 1.568 ± 0.027
+against 1.556 ± 0.007, median spectral angle 3.020 ± 0.014° against 3.102 ± 0.043°):
+stratification buys stability across draws, not a better model.
+
+**The delivered `splits.parquet` predates this** and was drawn without strata; `--no-stratify`
+reproduces it bit for bit, and with it the delivered checkpoint. On that draw the test set
+matched the rest to a standardised mean difference of 0.12 on absolute latitude and 0.13 on
+the image count, below 0.10 elsewhere, terrain fractions within 2 points, which put it at
+the 94th-97th percentile of the 500 random draws on those two covariates; reweighting to the
+training population lowered its MSE by 1.5 % (4.651e-5 → 4.580e-5) and the median spectral
+angle by 0.03°, so the numbers below are slightly pessimistic rather than flattering.
+Regenerating the file with strata means retraining and re-running the mosaic inference, so
+it is left as delivered.
 
 **Check before continuing**
 
@@ -169,7 +213,8 @@ python scripts/03_train_final.py
 ```
 
 No arguments: everything is fixed in the script, because this produces the
-delivered checkpoint.
+delivered checkpoint. It trains on `fold1`…`fold4`, validates on `fold0` and leaves
+`test` untouched until the final evaluation.
 
 **Outputs**: the best `epoch=*.ckpt`, `runs/final/image_count_stats.json`
 (**required at inference**: it carries the band-9 mean and standard deviation and the
@@ -276,32 +321,39 @@ python scripts/tools/apply_hollow_correction.py             # writes the correct
 Expect 115 112 pixels written, zero negative reflectances, and a result of about
 158.4 GB: the whole file is recompressed on the way out, only the corrected tiles change.
 
-**The corrected mosaic distributed so far is behind the layer**: it was written at scale
-0.50, before the strength was calibrated (step 8b). `correction_applied.json` records that
-run; re-running step 10 replaces both it and the mosaic.
-
 ### Rebuilding the layer from the data
 
 ```bash
 python scripts/06_build_hollow_pool.py --check        # --check compares each stage count
-python scripts/02_build_lsf_target.py --diag-b        # per-band VIRS-to-WAC calibration
 python scripts/07_build_simpairs.py
-python scripts/08_train_residual.py --validate runs/final/correction/residual_rank2.ckpt
+python scripts/08_train_residual.py --out runs/final/correction
 python scripts/tools/build_crater_footprints.py       # calibration table, streams ~31 GB
+python scripts/tools/build_hollow_correction.py       # first pass, any scale
 python scripts/tools/calibrate_hollow_scale.py        # derives --scale, leave-one-out
-python scripts/tools/build_hollow_correction.py --out runs/correction_check
+python scripts/tools/build_hollow_correction.py --scale <calibrated>
 ```
 
-Step 7 takes everything it injects from the `--diag-b` table, including the inter-band
-correlation of the colocation residual, measured at 0.965 rather than assumed;
-`--band-corr 0.5` rebuilds the layer as it stood before that measurement.
+The strength is calibrated on the rasterised layer, so step 9 runs twice: once to produce
+the gate, then again at the scale step 8b derives from it. On the reference data that scale
+is **0.797**, the median of the four per-crater values (0.595 at Dominici to 1.750 at
+Hopper); leave-one-out puts the residual contrast error at 0.041 in the median against
+0.175 uncorrected, i.e. the calibration transfers to a crater it never saw.
 
 Step 6 recovers the footprints the strict filter rejects: the `q1` criterion
 compares the VIS and NIR slopes, and a hollow spectrum fails it by construction,
 so the model never sees the unit it is asked to render. It must report **17 140**
 candidates within 15 km of a hollow group, **11 039** after the quality rule,
 **1 801** on the bright+blue mask and a final pool of **1 209 footprints over 227
-groups and 345 observations**. Step 7 turns them into **3 627** simulated pairs.
+groups and 345 observations**.
+
+Step 7 turns them into **3 627** training pairs, both sides measured: the input is the MDIS
+vector colocated under the footprint, the target that footprint's VIRS spectrum. Each
+footprint gives three rows, itself and two linear mixtures with its nearest training
+background at 1/3 and 2/3, so the residual learns how the correction scales with the hollow
+fill fraction. Training and inference therefore read the same input space, which matters:
+scored on held-out footprints with the mosaic's own vector, the residual improves the
+prediction by 44 % of MSE and 0.27 deg of spectral angle (3 seeds out of 3), and moves the
+background less than half as much when it is wrongly gated.
 
 Step 9 must select the same **115 112** pixels, reject 317 135 on the bright+blue
 stage, and report 608 Thomas disks and 3 205 HORNET polygons.
@@ -309,9 +361,9 @@ stage, and report 608 Thomas disks and 3 205 HORNET polygons.
 > **One thing does not reproduce bit for bit, by nature.** Step 8 trains a network:
 > a rerun lands on equivalent weights, not identical ones. `08 --validate` measures
 > how close, comparing the spectral shapes and the correction the two networks
-> actually apply. Everything before it is deterministic: step 6 selects the same
-> footprints and step 7 draws its noise per footprint from a fixed seed, so neither
-> depends on the order the rows happen to be in.
+> actually apply. Everything before it is deterministic and order-independent: step 6
+> selects the same footprints, and step 7 only reads and combines measured columns,
+> so `07 --validate` against a previous run must match exactly.
 
 The last two sections of
 [`notebooks/02_check_mosaic.ipynb`](../notebooks/02_check_mosaic.ipynb) check the result
